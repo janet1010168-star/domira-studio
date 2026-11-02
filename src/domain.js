@@ -6,9 +6,13 @@ Object.assign(CATALOG,{
  cabinet:{name:'木紋收納櫃',en:'Sideboard',w:1.2,d:.4,h:.8,color:'#a58b68',category:'收納櫃'},
  bookshelf:{name:'開放書架',en:'Bookcase',w:.8,d:.3,h:1.8,color:'#ac956f',category:'書架'},
  dining:{name:'四人餐桌',en:'Dining table',w:1.4,d:.8,h:.75,color:'#b49c73',category:'餐桌'},
- stool:{name:'圓木凳',en:'Stool',w:.42,d:.42,h:.45,color:'#a38c66',category:'凳子'}
+ stool:{name:'圓木凳',en:'Stool',w:.42,d:.42,h:.45,color:'#a38c66',category:'凳子'},
+ // 廚房三件：工作三角要量的是這三件的中心距離，所以尺寸取常見嵌入式規格（60 cm 模組）。
+ stove:{name:'嵌入煮食爐',en:'Cooktop',w:.6,d:.52,h:.06,color:'#5f6669',category:'廚房'},
+ sink:{name:'單槽洗碗盆',en:'Kitchen sink',w:.6,d:.5,h:.18,color:'#a7b0b0',category:'廚房'},
+ fridge:{name:'雙門雪櫃',en:'Fridge',w:.6,d:.65,h:1.8,color:'#d2d6d3',category:'廚房'}
 });
-export const MODEL_STYLES={sofa:['cloud','timber','channel','armless'],chair:['arc','cantilever','lounge'],table:['oval','rect','pedestal'],lamp:['arc','tripod','column'],rug:['woven','plush','border'],plant:['fig','olive','palm'],bed:['platform','upholstered','canopy'],desk:['writing','trestle','executive'],cabinet:['low','fluted','tall'],bookshelf:['open','ladder','grid'],dining:['rect','round','extendable'],stool:['round','saddle','upholstered','tubular']};
+export const MODEL_STYLES={sofa:['cloud','timber','channel','armless'],chair:['arc','cantilever','lounge'],table:['oval','rect','pedestal'],lamp:['arc','tripod','column'],rug:['woven','plush','border'],plant:['fig','olive','palm'],bed:['platform','upholstered','canopy'],desk:['writing','trestle','executive'],cabinet:['low','fluted','tall'],bookshelf:['open','ladder','grid'],dining:['rect','round','extendable'],stool:['round','saddle','upholstered','tubular'],stove:['cooktop','induction','gas'],sink:['single','double','undermount'],fridge:['twin','side','compact']};
 export function itemBounds(item){const a=item.rotation*Math.PI/180,c=Math.abs(Math.cos(a)),s=Math.abs(Math.sin(a));return {w:item.w*c+item.d*s,d:item.w*s+item.d*c};}
 export function clampItem(item,room){const b=itemBounds(item),clampAxis=(v,lo,hi)=>lo>hi?0:Math.max(lo,Math.min(hi,v));return {...item,x:clampAxis(item.x,-room.width/2+b.w/2,room.width/2-b.w/2),z:clampAxis(item.z,-room.depth/2+b.d/2,room.depth/2-b.d/2)};}
 export const ITEM_SIZE_LIMITS={min:.2,max:6};
@@ -169,17 +173,35 @@ function wallFree(room,edge,along){const wallLen=['top','bottom'].includes(edge)
 // 貼合模式（塞凹位）：把超出房間邊界、或超出所靠牆段可用長度的家具，沿超出方向縮到剛好，標 desired。
 // 只縮不放。拉大只是換一組數字，縮小才對應「這面牆被門切掉之後只剩多少」的真實約束。
 export function fitItemsToRoom(items,room,{margin=.05,minRatio=.55}={}){const limitW=Math.max(.2,room.width-margin*2),limitD=Math.max(.2,room.depth-margin*2);return items.map(item=>{let w=item.w,d=item.d;const b0=itemBounds({...item,w,d}),alongX=Math.abs(Math.cos(item.rotation*Math.PI/180))>=Math.abs(Math.sin(item.rotation*Math.PI/180));if(b0.w>limitW){const s=limitW/b0.w;if(alongX)w*=s;else d*=s;}if(b0.d>limitD){const s=limitD/b0.d;if(alongX)d*=s;else w*=s;}const probe={...item,w,d},wall=wallSegment(room,probe);if(wall){const free=wallFree(room,wall.edge,wall.along),alongW=['top','bottom'].includes(wall.edge),cur=alongW?itemBounds(probe).w:itemBounds(probe).d;if(free>=.4&&cur>free){const s=free/cur;if(alongW)w*=s;else d*=s;}}const ratio=Math.min(w/item.w,d/item.d),extreme=ratio<minRatio,shrunk=ratio<.999;if(!shrunk)return clampItem({...item},room);return clampItem({...item,w,d,desired:true,fitNote:extreme?`已縮至極限（約 ${Math.round(ratio*100)}%），實際需定制`:`已縮至貼合空間（目錄尺寸 ${item.w.toFixed(2)}×${item.d.toFixed(2)} m）`},room);});}
-export function generateLayout(room,style='warm',variant=0,options={}){validateRoom(room);const w=room.width/2,d=room.depth/2,prefs=options.preferences||['daylight','flow','green'];let specs=[['rug',0,.05,0],['sofa',0,-d+.68,0],['table',0,-d+2,0],['chair',w-.7,.15,variant%2?0:-25],['plant',-w+.5,-d+.5,0],['lamp',w-.5,-d+.5,0]];
+export function generateLayout(room,style='warm',variant=0,options={}){validateRoom(room);const w=room.width/2,d=room.depth/2,prefs=options.preferences||['daylight','flow','green'];let specs=[['rug',0,.05,0],['sofa',0,-d+.68,0],['table',0,-d+2,0],['chair',w-.7,.15,variant%2?0:-25],['plant',-w+.5,-d+.5,0],['lamp',w-.5,-d+.5,0],['cabinet',-w+.75,d-.26,180]];
  if(!prefs.includes('flow'))specs[2][2]-=.25;
  if(options.purpose==='reading'){specs[1]=['chair',-.75,-d+.8,20];specs[3]=['chair',.75,-d+.8,-20];specs[2][2]=-d+2.05;}
  if(options.purpose==='social'){specs[3][1]=-w+.7;specs[3][2]=.55;specs[3][3]=25;}
  if(options.purpose==='bedroom'){specs=[['rug',0,.05,0],['bed',-w+.78,-d+1.05,0],['wardrobe',0,d-.35,0],['lamp',w-.32,-d+.32,0]];}
  if(options.purpose==='work'){specs=[['rug',0,.05,0],['desk',0,-d+.4,0],['chair',0,-d+1.15,180],['plant',-w+.5,d-.5,0],['lamp',w-.45,d-.45,0]];}
- if(options.purpose==='dining'){specs=[['rug',0,.05,0],['table',0,0,0],['chair',-w+.75,-.55,90],['chair',w-.75,-.55,270],['lamp',w-.4,-d+.35,0]];}
+ if(options.purpose==='dining'){specs=[['rug',0,.05,0],['table',0,0,0],['chair',-w+.75,-.55,90],['chair',w-.75,-.55,270],['lamp',w-.4,-d+.35,0],['cabinet',0,d-.26,180]];}
+ // 客廳與飯廳各補一件收納櫃：收納不足時，最終會被塞在陽台或走廊，反而擋路。
+ // 靠牆、正面朝室內，由 refineLayoutOrientation 貼牆；放不下就由碰撞回退或直接略過。
+ // 廚房三件集中成 L 形工作帶（冰箱在角落、水槽與爐灶各靠一面牆）：
+ // 若照房間寬度把爐灶推到對面牆，6 m 寬的房間會排出 12 m 的「工作三角」——那不是廚房，是走廊。
+ if(options.purpose==='kitchen'){specs=[['fridge',-w+.35,-d+.45,0],['sink',-w+.26,-d+1.95,270],['stove',-w+1.95,-d+.28,180]];}
  const chairSpec=specs.find(s=>s[0]==='chair');
  if(!prefs.includes('daylight')&&chairSpec)chairSpec[3]=0;
- const items=[];for(let i=0;i<specs.length;i++){const [type,x,z,rotation]=specs[i];if(type==='plant'&&!prefs.includes('green'))continue;if(type!=='rug'&&(CATALOG[type].w>room.width||CATALOG[type].d>room.depth)&&!options.fitted)continue;let item=clampItem({id:'item-'+i,type,...CATALOG[type],x,z,rotation},room);if(type==='rug'){item.w=Math.min(item.w,room.width-.4);item.d=Math.min(item.d,room.depth-.4);item=clampItem(item,room);}if(collisions([...items,item]).length){const b=itemBounds(item);const candidates=[];const nx=Math.ceil((room.width-b.w-.06)/.12),nz=Math.ceil((room.depth-b.d-.06)/.12);for(let ix=0;ix<=nx;ix++)for(let iz=0;iz<=nz;iz++)candidates.push({...item,x:-w+b.w/2+.03+(room.width-b.w-.06)*ix/nx,z:-d+b.d/2+.03+(room.depth-b.d-.06)*iz/nz});candidates.sort((a,b)=>Math.hypot(a.x-x,a.z-z)-Math.hypot(b.x-x,b.z-z));const fit=candidates.find(c=>!collisions([...items,c]).length);if(!fit)continue;item=fit;}items.push(item);}
+ const items=[];for(let i=0;i<specs.length;i++){const [type,x,z,rotation]=specs[i];if(type==='plant'&&!prefs.includes('green'))continue;
+  // 收納櫃要貼牆才叫收納；1.2 m 寬的走廊房放 1.2 m 櫃只會堵住動線，寧可不放。
+  if(type==='cabinet'&&(room.width<2.4||room.depth<2))continue;
+  if(type!=='rug'&&(CATALOG[type].w>room.width||CATALOG[type].d>room.depth)&&!options.fitted)continue;let item=clampItem({id:'item-'+i,type,...CATALOG[type],x,z,rotation},room);if(type==='rug'){item.w=Math.min(item.w,room.width-.4);item.d=Math.min(item.d,room.depth-.4);item=clampItem(item,room);}if(collisions([...items,item]).length){const b=itemBounds(item);const candidates=[];const nx=Math.ceil((room.width-b.w-.06)/.12),nz=Math.ceil((room.depth-b.d-.06)/.12);for(let ix=0;ix<=nx;ix++)for(let iz=0;iz<=nz;iz++)candidates.push({...item,x:-w+b.w/2+.03+(room.width-b.w-.06)*ix/nx,z:-d+b.d/2+.03+(room.depth-b.d-.06)*iz/nz});candidates.sort((a,b)=>Math.hypot(a.x-x,a.z-z)-Math.hypot(b.x-x,b.z-z));const fit=candidates.find(c=>!collisions([...items,c]).length);if(!fit)continue;item=fit;}items.push(item);}
  if(style==='minimal'){for(const item of items){if(item.type==='sofa')item.color='#d2cfc6';if(item.type==='chair')item.color='#7b8583';}}if(style==='modern'){for(const item of items){if(item.type==='sofa')item.color='#788880';if(item.type==='rug')item.color='#a8afa7';}}
  const oriented=refineLayoutOrientation(items,room,{purpose:options.purpose,strict:false});
  const finalItems=options.fitted?fitItemsToRoom(oriented.items,room):oriented.items;
- return {items:finalItems,orientation:{adjusted:oriented.adjusted,hints:oriented.hints,openingCount:oriented.openingCount},engine:'local-rules',description:options.purpose==='reading'?'雙椅形成安靜的閱讀角落，茶几與照明保持觸手可及。':'以房間尺寸安排靠牆座位、中央交流區與角落照明，保留開放的前側動線。'};}
+ return {items:finalItems,orientation:{adjusted:oriented.adjusted,hints:oriented.hints,openingCount:oriented.openingCount},engine:'local-rules',description:options.purpose==='reading'?'雙椅形成安靜的閱讀角落，茶几與照明保持觸手可及。':options.purpose==='kitchen'?'冰箱、洗碗盆與煮食爐圍成工作三角——三點之間的走動距離越短，煮食時來回越少。':'以房間尺寸安排靠牆座位、中央交流區與角落照明，保留開放的前側動線。'};}
+
+// 淨暢通帶：房間扣掉家具之後，最寬的連續帶與最大空正方形。夜間動線用它判斷「這間房走得過去嗎」。
+export function clearanceMetrics(items,room){const {run,square}=freeMetrics(items,room);return {run:Math.round(run*100)/100,square:Math.round(square*100)/100};}
+
+// 廚房工作三角：冰箱、洗碗盆、煮食爐三點連成的三角形。
+// **這是設計慣例，不是香港法定要求**：屋宇署與《設計手冊》都沒有工作三角的規定，
+// 「三邊總長 4–8 m、每邊 1.2–2.7 m」是 NKBA（美國國家廚房與浴室協會）指引的常見轉述，
+// 本地沒有對應條文，所以標慣例、不得寫成法規。
+export const KITCHEN_TRIANGLE_BASIS={label:'設計慣例（NKBA 指引的常見轉述；香港無法定要求）',totalMin:4,totalMax:8,sideMin:1.2,sideMax:2.7,note:'只量三件家具中心點的直線距離，沒有計算中島或櫃體是否擋在中間。'};
+export function kitchenWorkTriangle(items){const pick=t=>(items||[]).find(i=>i.type===t),sink=pick('sink'),stove=pick('stove'),fridge=pick('fridge'),missing=['fridge','sink','stove'].filter(t=>!pick(t));if(missing.length)return {complete:false,missing,basis:KITCHEN_TRIANGLE_BASIS,status:'incomplete',detail:`工作三角要冰箱、洗碗盆與煮食爐三件都在才量得出來，現在還缺 ${missing.length} 件。`};const d=(p,q)=>Math.hypot(p.x-q.x,p.z-q.z),sides={fridgeSink:d(fridge,sink),sinkStove:d(sink,stove),stoveFridge:d(stove,fridge)},vals=Object.values(sides),total=vals.reduce((a,b)=>a+b,0),{sideMin,sideMax,totalMin,totalMax}=KITCHEN_TRIANGLE_BASIS,badSide=vals.filter(v=>v<sideMin||v>sideMax),badTotal=total<totalMin||total>totalMax;return {complete:true,sides,total:Math.round(total*100)/100,status:badSide.length||badTotal?'warn':'pass',basis:KITCHEN_TRIANGLE_BASIS,detail:`三邊 ${vals.map(v=>v.toFixed(2)).join(' / ')} m，總長 ${total.toFixed(2)} m（慣例 ${totalMin}–${totalMax} m）`};}

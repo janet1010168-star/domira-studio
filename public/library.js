@@ -2,7 +2,7 @@ import {priceStatus,budgetPrice} from './budget-domain.js';
 import {productFeatures,comparisonFeatureRows} from './product-insights.js';
 import {PRODUCTS,BRANDED_PRODUCTS,CONCEPT_PRODUCTS,analyzeProduct,priceLabel,SCORE_LABELS,SCORE_WEIGHTS,toSceneItem,PRICE_CHECKED} from './products.js';
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const $=s=>document.querySelector(s);const cats={all:'全部',sofa:'沙發',chair:'座椅',table:'桌几',lamp:'燈具',rug:'地毯',plant:'植栽',bed:'睡床',desk:'書桌',cabinet:'收納櫃',bookshelf:'書架',dining:'餐桌',stool:'凳子'};
+const $=s=>document.querySelector(s);const cats={all:'全部',sofa:'沙發',chair:'座椅',table:'桌几',lamp:'燈具',rug:'地毯',plant:'植栽',bed:'睡床',desk:'書桌',cabinet:'收納櫃',bookshelf:'書架',dining:'餐桌',stool:'凳子',wardrobe:'衣櫃',stove:'煮食爐',sink:'洗碗盆',fridge:'雪櫃'};
 const stars=(n,label='編輯星級')=>`<span class="star-meter" aria-label="${label} ${n} / 5"><span>★★★★★</span><span style="width:${n/5*100}%">★★★★★</span></span>`;
 export function createFurnitureLibrary({getState,getSelected,select,scene,modal,closeModal,notify,add,replace,icons}){
  let thumbnailObserver=null;let mode='brands',category='all',query='',brand='all',sort='recommended';const chosen=new Set(),thumbs=new Map();

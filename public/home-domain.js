@@ -1,4 +1,4 @@
-import {CATALOG,itemBounds,clampItem} from './domain.js';
+import {CATALOG,itemBounds,clampItem,clearanceMetrics} from './domain.js';
 export const HOME_KINDS={living:'客廳',bedroom:'睡房',dining:'飯廳',work:'書房',kitchen:'廚房',bathroom:'浴室',hall:'走廊',balcony:'露台',other:'其他空間'};
 export const HOME_COLORS={living:'#b7bca3',bedroom:'#a7b7bb',dining:'#c4b494',work:'#a9bba5',kitchen:'#c5baa6',bathroom:'#9dbab8',hall:'#b9b4a7',balcony:'#a4b99a',other:'#b3a8bb'};
 const finiteHome=n=>Number.isFinite(n),roundHome=n=>Math.round(n*1000)/1000;
@@ -12,3 +12,82 @@ export function homeItems(project,world=false){if(!project.home)return project.i
 export function planWalls(home){const lines=new Map();for(const room of home.rooms){const x=room.x-room.width/2,z=room.z-room.depth/2;for(const edge of ['top','bottom','left','right']){const axis=['top','bottom'].includes(edge)?'x':'z',coordinate=axis==='x'?z+(edge==='bottom'?room.depth:0):x+(edge==='right'?room.width:0),start=axis==='x'?x:z,length=axis==='x'?room.width:room.depth,key=axis+':'+Math.round(coordinate*100),openings=room.openings.filter(o=>o.edge===edge).map(o=>({start:start+o.offset*length,end:start+(o.offset+o.width)*length,kind:o.kind}));if(!lines.has(key))lines.set(key,{axis,coordinate,edges:[]});lines.get(key).edges.push({start,end:start+length,height:room.height,openings});}}
  const segments=[];for(const {axis,coordinate,edges} of lines.values()){const cuts=[...new Set(edges.flatMap(e=>[e.start,e.end,...e.openings.flatMap(o=>[o.start,o.end])]).map(n=>Math.round(n*1000)/1000))].sort((a,b)=>a-b);for(let i=1;i<cuts.length;i++){const start=cuts[i-1],end=cuts[i],middle=(start+end)/2,cover=edges.filter(e=>middle>=e.start-.001&&middle<=e.end+.001);if(!cover.length||end-start<.015)continue;const openings=cover.flatMap(e=>e.openings).filter(o=>middle>=o.start&&middle<=o.end),kind=openings.some(o=>o.kind==='door')?'door':openings.length?'window':'wall';segments.push({axis,x:axis==='x'?middle:coordinate,z:axis==='z'?middle:coordinate,length:end-start,height:Math.max(...cover.map(e=>e.height)),kind});}}return segments;}
 export function homePlanSVG(home){const width=900,scale=780/Math.max(home.width,home.depth),w=home.width*scale,h=home.depth*scale,ox=(width-w)/2,oy=65;const safe=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));return `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="${h+140}" viewBox="0 0 900 ${h+140}"><rect width="100%" height="100%" fill="#10171b"/><text x="50" y="32" fill="#d1e4d7" font-size="17" font-family="sans-serif">DOMIRA / ${home.rooms.length} 個空間 · ${home.width.toFixed(2)} × ${home.depth.toFixed(2)} m</text>${home.rooms.map(r=>`<rect x="${ox+(r.x-r.width/2+home.width/2)*scale}" y="${oy+(r.z-r.depth/2+home.depth/2)*scale}" width="${r.width*scale}" height="${r.depth*scale}" fill="${HOME_COLORS[r.kind]||HOME_COLORS.other}" opacity=".24"/>`).join('')}${planWalls(home).map(s=>{const x=ox+(s.x+home.width/2)*scale,y=oy+(s.z+home.depth/2)*scale,half=s.length*scale/2;return `<line x1="${s.axis==='x'?x-half:x}" x2="${s.axis==='x'?x+half:x}" y1="${s.axis==='z'?y-half:y}" y2="${s.axis==='z'?y+half:y}" stroke="${s.kind==='door'?'#d2b77f':s.kind==='window'?'#7eafbf':'#d5ddd4'}" stroke-width="${s.kind==='wall'?3:2}" ${s.kind==='door'?'stroke-dasharray="4 5"':''}/>`;}).join('')}${home.rooms.flatMap(r=>(r.items||[]).map(i=>{const color=/^#[0-9a-f]{6}$/i.test(i.color||'')?i.color:'#8fa68f';return `<g transform="translate(${ox+(r.x+i.x+home.width/2)*scale} ${oy+(r.z+i.z+home.depth/2)*scale}) rotate(${i.rotation})"><rect x="${-i.w*scale/2}" y="${-i.d*scale/2}" width="${i.w*scale}" height="${i.d*scale}" rx="3" fill="${color}" fill-opacity="${i.type==='rug'?.2:.7}" stroke="#d0e1d8" stroke-opacity=".4"/><title>${safe(i.name||i.type)}</title></g>`;})).join('')}${home.rooms.map(r=>`<text x="${ox+(r.x+home.width/2)*scale}" y="${oy+(r.z+home.depth/2)*scale-4}" text-anchor="middle" fill="#e4eee7" font-size="14" font-family="sans-serif">${safe(r.name)}<tspan x="${ox+(r.x+home.width/2)*scale}" dy="19" font-size="10" fill="#a6b9ac">${r.width.toFixed(2)} × ${r.depth.toFixed(2)} m</tspan></text>`).join('')}<text x="50" y="${h+115}" fill="#a7bbae" font-size="11" font-family="sans-serif">AI 矩形近似 · 金色虛線為門洞 / 藍線為窗 · 需實測核對，非施工圖</text></svg>`;}
+
+// ── 房間相鄰圖：方向 3 的前置 ──────────────────────────────────────────
+// 為什麼必須先做這個：openings 只記錄「哪面牆有門」，不知道門通往哪一間房。
+// 所以「床 → 門 → 走廊 → 廁所」這種跨房路線，之前根本無從檢查，只能檢查單一門寬。
+// 判定規則：兩間房共享一段邊界（重疊 > 0.3 m），且門正好落在共享段上，才算相通。
+export function buildRoomGraph(home){
+ const rooms=(home&&home.rooms)||[],tol=.03;
+ const L=r=>r.x-r.width/2,R=r=>r.x+r.width/2,T=r=>r.z-r.depth/2,B=r=>r.z+r.depth/2;
+ // 門的世界座標區間：edge 起點 + offset×邊長。寬度換算成公尺（offset/width 都是 0–1 的比例）。
+ const doorsOn=(room,edge,lo,hi)=>{
+  const horizontal=['top','bottom'].includes(edge),len=horizontal?room.width:room.depth,start=horizontal?L(room):T(room);
+  return (room.openings||[]).filter(o=>o.edge===edge&&o.kind==='door').map(o=>{
+   const a=start+o.offset*len,b=a+o.width*len;
+   return {width:Math.round(o.width*len*100)/100,from:a,to:b};
+  }).filter(d=>Math.min(d.to,hi)-Math.max(d.from,lo)>.05);
+ };
+ const edges=[];
+ for(let i=0;i<rooms.length;i++)for(let j=i+1;j<rooms.length;j++){
+  const a=rooms[i],b=rooms[j],pairs=[];
+  if(Math.abs(B(a)-T(b))<=tol)pairs.push(['bottom','top']);
+  if(Math.abs(T(a)-B(b))<=tol)pairs.push(['top','bottom']);
+  if(Math.abs(R(a)-L(b))<=tol)pairs.push(['right','left']);
+  if(Math.abs(L(a)-R(b))<=tol)pairs.push(['left','right']);
+  for(const [edgeA,edgeB] of pairs){
+   const axis=['top','bottom'].includes(edgeA)?'x':'z';
+   const lo=axis==='x'?Math.max(L(a),L(b)):Math.max(T(a),T(b));
+   const hi=axis==='x'?Math.min(R(a),R(b)):Math.min(B(a),B(b));
+   if(hi-lo<=.3)continue;
+   const found=[...doorsOn(a,edgeA,lo,hi),...doorsOn(b,edgeB,lo,hi)];
+   // 同一道門會在共享牆兩側各記一次；起點相同、寬度相近的視為同一扇。
+   const unique=found.filter((d,k)=>found.findIndex(e=>Math.abs(e.from-d.from)<.06&&Math.abs(e.width-d.width)<.06)===k);
+   if(!unique.length)continue;
+   const door=unique.reduce((m,d)=>d.width<m.width?d:m);
+   edges.push({a:a.id,b:b.id,shared:{axis,lo:Math.round(lo*100)/100,hi:Math.round(hi*100)/100,length:Math.round((hi-lo)*100)/100},door:{width:door.width,from:Math.round(door.from*100)/100,to:Math.round(door.to*100)/100},doors:unique.map(d=>({width:d.width,from:Math.round(d.from*100)/100,to:Math.round(d.to*100)/100}))});
+  }
+ }
+ return {nodes:rooms.map(r=>({id:r.id,name:r.name,kind:r.kind})),edges};
+}
+
+// 夜間動線：睡房 →（有門相連的房間）→ 浴室。只回答「走得通嗎、門夠寬嗎、每間房淨寬夠不夠」，
+// 不假裝知道床邊到門的實際步距——那需要家具與門的連線距離，現在只有房間矩形。
+export function nightRoute(home,{mobility='standard'}={}){
+ const rooms=(home&&home.rooms)||[],byId=new Map(rooms.map(r=>[r.id,r]));
+ const start=rooms.find(r=>r.kind==='bedroom'),goals=rooms.filter(r=>r.kind==='bathroom');
+ if(!start)return {ok:false,status:'unavailable',detail:'全屋沒有睡房，夜間路線沒有起點。'};
+ if(!goals.length)return {ok:false,status:'unavailable',detail:'全屋沒有浴室，夜間路線沒有終點。'};
+ const graph=buildRoomGraph(home),adj=new Map();
+ for(const e of graph.edges){if(!adj.has(e.a))adj.set(e.a,[]);if(!adj.has(e.b))adj.set(e.b,[]);adj.get(e.a).push(e);adj.get(e.b).push(e);}
+ // BFS：無權圖，房間數最多 12，不需要 Dijkstra。
+ const prev=new Map(),queue=[start.id],seen=new Set([start.id]),goalIds=new Set(goals.map(g=>g.id));
+ let target=null;
+ while(queue.length&&!target){
+  const id=queue.shift();
+  for(const e of adj.get(id)||[]){
+   const next=e.a===id?e.b:e.a;
+   if(seen.has(next))continue;
+   seen.add(next);prev.set(next,{from:id,edge:e});
+   if(goalIds.has(next)){target=next;break;}
+   queue.push(next);
+  }
+ }
+ if(!target)return {ok:false,status:'warn',detail:'睡房與浴室之間找不到有門相連的路徑——平面圖上兩間房沒有共享一段帶門的牆，可能中間隔著沒標門的空間。'};
+ const path=[];
+ for(let cur=target;cur;cur=(prev.get(cur)||{}).from)path.unshift(cur);
+ const doorMin=mobility==='wheelchair'?.85:.8,runNeed=mobility==='wheelchair'?1.05:.6;
+ const roomInfo=path.map(id=>{
+  const r=byId.get(id),m=clearanceMetrics(r.items||[],r);
+  return {id,name:r.name,kind:r.kind,run:m.run,square:m.square,need:runNeed,status:m.run>=runNeed?'pass':'warn'};
+ });
+ const doorInfo=[];
+ for(let i=1;i<path.length;i++){
+  const e=(prev.get(path[i])||{}).edge,w=e?e.door.width:0;
+  doorInfo.push({from:byId.get(path[i-1]).name,to:byId.get(path[i]).name,width:w,min:doorMin,status:w>=doorMin?'pass':'warn'});
+ }
+ const startRoom=byId.get(path[0]);
+ const nightKit={hasWardrobe:!!(startRoom.items||[]).find(i=>i.type==='wardrobe'),detail:startRoom.items&&startRoom.items.find(i=>i.type==='wardrobe')?'睡房有衣櫃，取衣不必離開房間。':'睡房沒有衣櫃，夜間取衣要走到別的房間。'};
+ const bad=roomInfo.filter(r=>r.status==='warn').length+doorInfo.filter(d=>d.status==='warn').length;
+ return {ok:true,status:bad?'warn':'pass',rooms:roomInfo,doors:doorInfo,path:path.map(id=>byId.get(id).name),mobility,doorMin,runNeed,nightKit,detail:`${path.map(id=>byId.get(id).name).join(' → ')}（${path.length-1} 道門，最窄 ${Math.min(...doorInfo.map(d=>d.width)).toFixed(2)} m）`};
+}
