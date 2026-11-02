@@ -147,10 +147,13 @@ function occupancyGrid(items,room,step=.1){const W=Math.max(1,Math.round(room.wi
 function freeMetrics(items,room){const {grid,W,D,step}=occupancyGrid(items,room);let maxRun=0;for(let z=0;z<D;z++){let run=0;for(let x=0;x<W;x++){if(grid[z*W+x])run=0;else{run++;if(run>maxRun)maxRun=run;}}}const dp=new Int32Array(W*D);let best=0;for(let z=0;z<D;z++)for(let x=0;x<W;x++){const i=z*W+x;if(grid[i]){dp[i]=0;continue;}dp[i]=1+Math.min(x>0?dp[i-1]:0,z>0?dp[i-W]:0,x>0&&z>0?dp[i-W-1]:0);if(dp[i]>best)best=dp[i];}return {run:maxRun*step,square:best*step};}
 function sideGap(item,room){const b=itemBounds(item);if(b.w>=b.d)return Math.max((item.z-b.d/2)+room.depth/2,room.depth/2-(item.z+b.d/2));return Math.max((item.x-b.w/2)+room.width/2,room.width/2-(item.x+b.w/2));}
 function gapBetween(a,b){const ab=itemBounds(a),bb=itemBounds(b);return Math.max(Math.abs(a.x-b.x)-(ab.w+bb.w)/2,Math.abs(a.z-b.z)-(ab.d+bb.d)/2);}
-export function checkClearances(items,room){const out=[],first=t=>items.find(i=>i.type===t),{run,square}=freeMetrics(items,room);
+// 夜間動線的最小一環：門寬。真正的「床→廁所→取衣→穿鞋」需要房間相鄰圖，
+// 現在只有 openings（哪面牆有門），不知道門通往哪間房，所以只能檢查寬度。
+export function checkDoorWidths(rooms,options={}){const min=options.mobility==='wheelchair'?.85:.8,out=[];for(const r of rooms||[]){for(const d of r.openings||[]){if(d.kind!=='door')continue;const edgeLen=['top','bottom'].includes(d.edge)?r.width:r.depth,w=Math.round(d.width*edgeLen*100)/100;out.push({room:r.name,edge:d.edge,width:w,min,status:w>=min?'pass':'warn',mobility:options.mobility||'standard'});}}return out;}
+export const ACCESS_MODES={standard:{label:'一般',accessibility:false,source:null},wheelchair:{label:'輪椅／行動不便',accessibility:true,source:'《設計手冊：暢通無阻的通道 2008》'}};
+export function checkClearances(items,room,options={}){const out=[],first=t=>items.find(i=>i.type===t),{run,square}=freeMetrics(items,room),mode=ACCESS_MODES[options.mobility]||ACCESS_MODES.standard;
  const push=(id,actual,detail)=>{const r=CLEARANCE_RULES[id];const bad=actual<r.min||(r.max&&actual>r.max);out.push({id,label:r.label,actual:Math.round(actual*100)/100,min:r.min,max:r.max??null,legal:!!r.legal,accessibility:!!r.accessibility,ref:r.ref??null,status:bad?(r.legal?'fail':'warn'):'pass',detail});};
- push('walkway',run,`最寬的連續通道帶 ${run.toFixed(2)} m`);
- push('turning',square,`最大空正方形 ${square.toFixed(2)}×${square.toFixed(2)} m`);
+ if(mode.accessibility){push('walkway',run,`最寬的連續通道帶 ${run.toFixed(2)} m`);push('turning',square,`最大空正方形 ${square.toFixed(2)}×${square.toFixed(2)} m`);}
  const bed=first('bed');if(bed)push('bedSide',sideGap(bed,room),`床的可用單側通道 ${sideGap(bed,room).toFixed(2)} m`);
  const sofa=first('sofa'),table=first('table');if(sofa&&table){const g=gapBetween(sofa,table);push('sofaToTable',g,`沙發與茶几邊到邊 ${g.toFixed(2)} m`);}
  const dining=first('dining');if(dining){const others=items.filter(i=>i.id!==dining.id);const near=others.length?Math.min(...others.map(o=>gapBetween(dining,o))):sideGap(dining,room);push('dining',near,`餐桌到最近家具 ${near.toFixed(2)} m`);}
@@ -158,7 +161,9 @@ export function checkClearances(items,room){const out=[],first=t=>items.find(i=>
 // 收納容積：純幾何。常見的 0.1–0.15 m³/㎡ 只查到設計部落格與整理師說法，沒有法規或標準可引用，
 // 所以明確標成「經驗值」；有可靠出處之前不得寫成標準。櫃內有效容積率取 0.75（門片、間隔、空隙）。
 export const STORAGE_BASIS={label:'經驗值（無可引用法源）',min:.1,max:.15};
-export function storageSummary(items,room){const keys=['cabinet','bookshelf','wardrobe'],pieces=items.filter(i=>keys.includes(i.type)).map(i=>({id:i.id,type:i.type,volume:Math.round(i.w*i.d*i.h*.75*100)/100}));const volume=pieces.reduce((s,p)=>s+p.volume,0),area=Math.max(.01,room.width*room.depth);return {pieces,volume:Math.round(volume*100)/100,area:Math.round(area*100)/100,ratio:Math.round(volume/area*1000)/1000,basis:STORAGE_BASIS};}
+export const REACH_ZONES={standard:{low:.6,high:1.5,label:'站立伸手可及 0.6–1.5 m'},wheelchair:{low:.6,high:1.2,label:'坐姿可及 0.6–1.2 m'}};
+// 可達性收納：同樣的櫃，能被「不彎腰、不踮腳」拿到的那一段才算可用容積。
+export function storageSummary(items,room,options={}){const keys=['cabinet','bookshelf','wardrobe'],zone=REACH_ZONES[options.mobility]||REACH_ZONES.standard;let volume=0,reachable=0;const pieces=items.filter(i=>keys.includes(i.type)).map(i=>{const v=i.w*i.d*i.h*.75,band=Math.max(0,Math.min(i.h,zone.high)-zone.low),r=i.w*i.d*band*.75;volume+=v;reachable+=r;return {id:i.id,type:i.type,height:i.h,volume:Math.round(v*100)/100,reachable:Math.round(r*100)/100};});const area=Math.max(.01,room.width*room.depth);return {pieces,volume:Math.round(volume*100)/100,reachable:Math.round(reachable*100)/100,reachRatio:volume>0?Math.round(reachable/volume*1000)/1000:0,zone,area:Math.round(area*100)/100,ratio:Math.round(volume/area*1000)/1000,basis:STORAGE_BASIS};}
 function wallSegment(room,item){const b=itemBounds(item),eps=.15;if(item.z-b.d/2<=-room.depth/2+eps)return {edge:'top',along:item.x};if(item.z+b.d/2>=room.depth/2-eps)return {edge:'bottom',along:item.x};if(item.x-b.w/2<=-room.width/2+eps)return {edge:'left',along:item.z};if(item.x+b.w/2>=room.width/2-eps)return {edge:'right',along:item.z};return null;}
 function wallFree(room,edge,along){const wallLen=['top','bottom'].includes(edge)?room.width:room.depth,cuts=layoutOpenings(room).filter(o=>o.edge===edge).map(o=>{const a=(o.offset-.5)*wallLen,b=a+o.width*wallLen;return a<b?[a,b]:[b,a];}).sort((p,q)=>p[0]-q[0]);let lo=-wallLen/2,hi=wallLen/2;for(const [a,b] of cuts){if(along>=a&&along<=b)return 0;if(along>b)lo=Math.max(lo,b);else hi=Math.min(hi,a);}return Math.max(0,hi-lo);}
 // 貼合模式（塞凹位）：把超出房間邊界、或超出所靠牆段可用長度的家具，沿超出方向縮到剛好，標 desired。
