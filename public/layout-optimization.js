@@ -1,0 +1,32 @@
+import {CATALOG,validateRoom,itemBounds,layoutOpenings,furnitureFront} from './domain.js';
+import {MOBILITY_PROFILES,planCirculation} from './circulation-domain.js';
+
+export const FIXED_TYPES=new Set(['sink','cooktop','stove']);
+export const routeTargets=items=>items.filter(i=>!['rug','plant','lamp'].includes(i.type));
+export function validateOptimizationInput(body){
+ validateRoom(body.room);
+ if(body.room.width*body.room.depth>160||body.room.width>20||body.room.depth>20)throw new Error('Layout Agent 暫支援 160 m² 內的單間空間。');
+ if(!Array.isArray(body.items)||!body.items.length||body.items.length>24)throw new Error('Layout Agent 每間支援 1–24 件家具。');
+ const ids=new Set();for(const i of body.items){if(!i||typeof i.id!=='string'||!i.id||i.id.length>160||ids.has(i.id)||!CATALOG[i.type]||!['w','d','h'].every(k=>Number.isFinite(i[k])&&i[k]>0&&i[k]<15)||!['x','z','rotation'].every(k=>Number.isFinite(i[k])&&Math.abs(i[k])<10000))throw new Error('目前家具資料不完整，未進行優化。');ids.add(i.id);}
+ if(!MOBILITY_PROFILES[body.config?.profile]||!routeTargets(body.items).some(i=>i.id===body.config?.targetId))throw new Error('請選擇使用需求及目的家具。');
+ planCirculation(body,body.config);return body;
+}
+// SAT checks actual rotated footprints, without allowing an overlap tolerance.
+export function overlaps(a,b){if(a.type==='rug'||b.type==='rug')return false;for(const angle of [a.rotation,b.rotation])for(const axis of [0,90]){const t=(angle+axis)*Math.PI/180,x=Math.cos(t),z=Math.sin(t),radius=i=>{const r=i.rotation*Math.PI/180;return Math.abs(x*Math.cos(r)+z*Math.sin(r))*i.w/2+Math.abs(-x*Math.sin(r)+z*Math.cos(r))*i.d/2;};if(Math.abs((a.x-b.x)*x+(a.z-b.z)*z)>=radius(a)+radius(b)-1e-6)return false;}return true;}
+export function assessLayout(project,config){const routes=routeTargets(project.items).map(i=>({id:i.id,...planCirculation(project,{...config,targetId:i.id})}));const target=routes.find(r=>r.id===config.targetId);return {reachable:routes.filter(r=>r.ok).map(r=>r.id),total:routes.length,target:{ok:target.ok,length:target.length,turns:target.turns||0,reason:target.reason},route:target};}
+export function validateCandidate(project,placements,config){
+ if(!Array.isArray(placements)||placements.length!==project.items.length||new Set(placements.map(i=>i?.id)).size!==project.items.length)throw new Error('AI 必須保留每件家具，且不能重複。');
+ const ids=new Set(project.items.map(i=>i.id));if(placements.some(i=>!i||!ids.has(i.id)||!['x','z','rotation'].every(k=>Number.isFinite(i[k])&&Math.abs(i[k])<10000)||Object.keys(i).some(k=>!['id','x','z','rotation','reason'].includes(k))))throw new Error('AI 只能調整現有家具的位置與朝向。');
+ const items=project.items.map(old=>{const p=placements.find(p=>p.id===old.id),rotation=((p.rotation%360)+360)%360;const item={...old,x:p.x,z:p.z,rotation};if((old.locked||FIXED_TYPES.has(old.type))&&(Math.hypot(p.x-old.x,p.z-old.z)>.001||Math.abs(rotation-((old.rotation%360)+360)%360)>.001))throw new Error('固定設備不能移動。');const b=itemBounds(item);if(Math.abs(item.x)+b.w/2>project.room.width/2+.0001||Math.abs(item.z)+b.d/2>project.room.depth/2+.0001)throw new Error('家具超出房間邊界。');return item;});
+ for(let i=0;i<items.length;i++)for(let j=i+1;j<items.length;j++)if(overlaps(items[i],items[j]))throw new Error('家具占地重疊。');
+ for(const o of layoutOpenings(project.room).filter(o=>o.kind==='door')){const horizontal=['top','bottom'].includes(o.edge),length=horizontal?project.room.width:project.room.depth,reach=Math.max(.8,MOBILITY_PROFILES[config.profile].width),along=(o.offset+o.width/2-.5)*length;const zone={type:'door',x:horizontal?along:(o.edge==='left'?-1:1)*(project.room.width/2-reach/2),z:horizontal?(o.edge==='top'?-1:1)*(project.room.depth/2-reach/2):along,w:horizontal?o.width*length:reach,d:horizontal?reach:o.width*length,rotation:0};if(items.some(i=>overlaps(i,zone)))throw new Error('門口通行區被家具阻擋。');}
+ // Wall-facing storage and seating must retain their use direction.
+ for(const item of items){const old=project.items.find(i=>i.id===item.id);if(['bed','cabinet','bookshelf','desk','wardrobe'].includes(item.type)){const f=furnitureFront(item.rotation),front=[item.x+f.x*(item.d/2+.3),item.z+f.z*(item.d/2+.3)];if(Math.abs(front[0])>project.room.width/2||Math.abs(front[1])>project.room.depth/2)throw new Error('家具正面朝向牆壁，無法使用。');}if(['chair','sofa'].includes(item.type)){const focus=items.find(i=>i.type==='desk'&&item.type==='chair')||items.find(i=>['table','dining'].includes(i.type));if(focus){const facing=i=>{const f=furnitureFront(i.rotation),d=Math.hypot(focus.x-i.x,focus.z-i.z);return d>.01?(f.x*(focus.x-i.x)+f.z*(focus.z-i.z))/d:1;};const oldFocus=project.items.find(i=>i.id===focus.id),oldDirection=furnitureFront(old.rotation),wasFacing=oldFocus&&(oldDirection.x*(oldFocus.x-old.x)+oldDirection.z*(oldFocus.z-old.z))>0;if(wasFacing&&facing(item)<.35)throw new Error('座位背對原有使用區。');}}}
+ return items;
+}
+export function chooseOptimization(project,candidates,config){
+ const before=assessLayout(project,config);let best=null,rejected=0;
+ for(const candidate of (Array.isArray(candidates)?candidates:[]).slice(0,3)){try{const items=validateCandidate(project,candidate.placements,config),after=assessLayout({...project,items},config);if(!after.target.ok||before.reachable.some(id=>!after.reachable.includes(id)))throw new Error('可達性未改善。');const gained=after.reachable.length-before.reachable.length,shorter=before.target.length-after.target.length,fewer=before.target.turns-after.target.turns;if(!gained&&before.target.ok&&!(shorter>.15||fewer>0&&shorter>=-.15))throw new Error('未取得可驗證的改善。');const changes=items.flatMap((i,n)=>Math.hypot(i.x-project.items[n].x,i.z-project.items[n].z)>.01||Math.abs(i.rotation-project.items[n].rotation)>.5?[{id:i.id,name:i.name||CATALOG[i.type].name,distance:Math.hypot(i.x-project.items[n].x,i.z-project.items[n].z),rotation:i.rotation,reason:String(candidate.placements.find(p=>p.id===i.id)?.reason||'讓出通道與家具正面使用空間。').slice(0,160)}]:[]);const score=gained*1000+(before.target.ok?shorter:100)+fewer*.12-changes.reduce((n,c)=>n+c.distance,0)*.03;if(!best||score>best.score)best={items,after,changes,score};}catch{rejected++;}}
+ const metrics=m=>({reachable:m.reachable.length,total:m.total,target:m.target});
+ return best?{improved:true,placements:best.items.map(({id,x,z,rotation})=>({id,x,z,rotation})),before:metrics(before),after:metrics(best.after),changes:best.changes,route:best.after.route,rejected}:{improved:false,before:metrics(before),after:metrics(before),changes:[],rejected,message:'未找到通過幾何檢查且更好的擺位，已保留原設計。可先移除多餘家具，或核對門位與尺寸。'};
+}
