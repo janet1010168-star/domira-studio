@@ -154,7 +154,15 @@ async function main() {
 
     console.log('\n[適老與動線 · 三檔]');
     await careTab();
-    await sleep(500);
+    await sleep(900);
+    // 進入就要有預覽：地圖不該還藏著等使用者按按鈕。
+    const autoPreview = JSON.parse(await evaluate(`JSON.stringify({
+      status: (document.getElementById('route-status')||{}).textContent || '',
+      mapHidden: (document.getElementById('route-map')||{}).hidden,
+      overlay: (document.getElementById('route-overlay')||{}).innerHTML ? document.getElementById('route-overlay').innerHTML.length : 0,
+    })`));
+    check('進入即自動規劃（不用先按按鈕）', /規劃完成/.test(autoPreview.status), autoPreview.status);
+    check('預覽圖自動出現', autoPreview.mapHidden === false && autoPreview.overlay > 0, 'overlay=' + autoPreview.overlay);
     const senior = await readPanel();
     check('預設是適老步行', senior.mobility === 'senior', senior.mobility);
     check('驗算面板有內容', senior.rows > 0, senior.rows + ' 列');
