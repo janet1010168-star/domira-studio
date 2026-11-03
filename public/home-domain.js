@@ -131,7 +131,7 @@ function mergeSameNameRooms(rooms){
 // 看起來就是「框貼不上去、房間之間有裂縫」。這裡把相鄰且縫很小的兩間對齊，
 // 只移動較小的那一間（避免主要空間被推走），移動不改寬深所以面積不失真。
 // 之後再由 resolveOverlaps 保證不重疊；吸完仍留著的縫通常是真實牆體或走道，不強行消除。
-function snapSharedWalls(home,tol=.8){
+function snapSharedWalls(home,tol=1.4){
  const rooms=home.rooms,hw=home.width/2,hd=home.depth/2;
  for(let iter=0;iter<8;iter++){
   let moved=false;
