@@ -68,6 +68,7 @@ npm run dev
 |---|---|
 |`LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`|装修报价后端可选模型配置；未设置时保留原有规则/模拟降级|
 |`DEEPSEEK_API_KEY`|服务器AI布局、图纸分析和提示词处理|
+|`VISION_BASE_URL` / `VISION_MODEL` / `VISION_API_KEY` / `VISION_PROVIDER`|可选：覆盖图纸分析用的视觉模型（默认 DeepSeek）。三者都走 OpenAI 的 `/chat/completions`，换 Gemini／Qwen 只需改 Secret、不改代码；`VISION_API_KEY` 优先于 `DEEPSEEK_API_KEY`|
 |`RENDER_ACCESS_TOKEN`|客户渲染访问码|
 |`AI`|Cloudflare Workers AI绑定|
 |`RENDER_DB`|D1渲染状态及幂等数据|
