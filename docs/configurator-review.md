@@ -1,6 +1,6 @@
-# Configurator review — pending owner approval
+# Configurator release — owner approved
 
-Base: GitHub v2.0 47106fa. Changes are local for review; do not push v2.0 or deploy before the owner confirms this preview (push triggers production).
+Base: GitHub v2.0 47106fa. The owner approved the light-theme preview for publication. Push to v2.0 triggers production; completion requires successful CI and verification of both Workers and every published asset.
 
 ## Fixed
 - Furniture library startup was aborted by generic `.chip` handlers that expected every button to contain a span. The new fit-mode buttons have none. Restrict preference handlers and syncing to `[data-pref]`; retain fit-mode handlers.
@@ -24,4 +24,4 @@ Base: GitHub v2.0 47106fa. Changes are local for review; do not push v2.0 or dep
 4. Desktop/mobile/readable layouts remain usable; controls retain labels and keyboard focus. No route/avatar is baked into design renders.
 5. Full Node test suite, Worker build/ESM validation, Cloudflare build and quote bundle checks must pass. After approval: fetch/reconcile concurrent GitHub changes, commit/push, wait CI, verify frontend and API same SHA and all asset hashes.
 
-Owner requested light theme on review: white/soft-neutral surfaces, charcoal text, dark green actions, light dialog/library/quote/render panels, and theme-aware planning diagram. Await a new approval before publishing.
+Owner requested light theme on review: white/soft-neutral surfaces, charcoal text, dark green actions, light dialog/library/quote/render panels, and theme-aware planning diagram. The owner subsequently confirmed publication of this light-theme version.
