@@ -10,7 +10,7 @@ Base: GitHub v2.0 47106fa. Changes are local for review; do not push v2.0 or dep
 - Keep optional paid AI image editing, labelled ambience reference, with side-by-side comparison. It cannot guarantee pixel/geometric fidelity. No live AI image was purchased during local QA.
 
 ## Added
-- Tesla configurator-inspired stage/choice layout, understated borders, consistent material choices, responsive configuration panel. Reference https://www.tesla.com/model3/design?#overview ; no Tesla assets/branding reused.
+- Light-themed Tesla configurator-inspired stage/choice layout, understated borders, consistent material choices, responsive configuration panel. Reference https://www.tesla.com/model3/design?#overview ; no Tesla assets/branding reused.
 - Readable mode: larger type, stronger contrast, minimum 46px controls, no UI transitions. Explicitly started route animation has pause, replay and skip controls.
 - Local breadth-first path search on a 0.15m grid, inflated rotated furniture obstacles, conservative boundary clearance and furniture-front destination. 0.7/0.9/1.2m profiles are planning targets, not legal compliance claims.
 - Use detected door position when available or explicitly labelled manual start. Reject detected doors narrower than requested route. Show actual visited cells, route creation and walking avatar, then explain actual length/turns/rug cautions. No invented path for blocked room/entrance/destination.
@@ -23,3 +23,5 @@ Base: GitHub v2.0 47106fa. Changes are local for review; do not push v2.0 or dep
 3. Start planning on a clear route: explored cells then route then avatar/explanation. Pause/resume, skip, replay work. Blocked layout shows no route. Wider profile rejects a too-small passage. Changing furniture clears previous planning.
 4. Desktop/mobile/readable layouts remain usable; controls retain labels and keyboard focus. No route/avatar is baked into design renders.
 5. Full Node test suite, Worker build/ESM validation, Cloudflare build and quote bundle checks must pass. After approval: fetch/reconcile concurrent GitHub changes, commit/push, wait CI, verify frontend and API same SHA and all asset hashes.
+
+Owner requested light theme on review: white/soft-neutral surfaces, charcoal text, dark green actions, light dialog/library/quote/render panels, and theme-aware planning diagram. Await a new approval before publishing.
