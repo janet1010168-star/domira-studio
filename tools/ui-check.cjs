@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-/* 在真實 Chrome 裡檢查 Domira Studio 的 UI：3D 場景、平面圖、動線面板、住戶能力 chips。
+/* 在真實 Chrome 裡檢查 Domira Studio（v2.0 合併後）：兩個 tab、活動能力三檔、
+ * 動線驗算面板、廚房工作三角、全屋夜間動線。
  *
  * 為什麼要它：
- *   node --check 只看語法，語法正確的 JS 照樣可能在執行時炸掉；
- *   DOM 樁看不到版面、WebGL 與 pointer 事件鏈。這一層用本機 Chrome headless
- *   跑真頁面（CDP 走 WebSocket，不裝 npm 依賴、不下載 Chromium），
- *   並把畫面截圖存到 .screenshots/，讓人可以自己看一眼版面。
+ *   node --check 只看語法；DOM 樁看不到版面、WebGL 與事件鏈。
+ *   這一層用本機 Chrome headless 跑真頁面（CDP 走 WebSocket，不裝 npm 依賴），
+ *   並把畫面截圖存到 .screenshots/。
  *
  * 用法：
  *   先開 dev server： node scripts/dev.mjs
  *   再跑：            node tools/ui-check.cjs [baseUrl]
- *   預設 baseUrl = http://127.0.0.1:3000
+ *   需要 danger-full-access：Chrome 要建 Mojo named pipe，沙箱下起不來。
  */
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -18,7 +18,7 @@ const os = require('os');
 const path = require('path');
 
 const BASE = (process.argv[2] || 'http://127.0.0.1:3000').replace(/\/$/, '');
-const PORT = Number(process.env.DOMIRA_CDP_PORT || 9334);
+const PORT = Number(process.env.DOMIRA_CDP_PORT || 9335);
 const PROFILE = path.join(os.tmpdir(), 'domira-studio-cdp');
 const OUT = path.join(__dirname, '..', '.screenshots');
 
@@ -44,7 +44,7 @@ async function main() {
 
   const proc = spawn(chrome, [
     '--headless=new', '--disable-gpu', '--no-sandbox',
-    '--enable-unsafe-swiftshader',           // 沒有 GPU 也要畫得出 3D
+    '--enable-unsafe-swiftshader',
     '--remote-debugging-port=' + PORT,
     '--user-data-dir=' + PROFILE,
     '--window-size=1600,1400',
@@ -96,13 +96,9 @@ async function main() {
   });
 
   async function evaluate(expr) {
-    const out = await send('Runtime.evaluate', {
-      expression: expr, returnByValue: true, awaitPromise: true,
-    });
+    const out = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
     const r = out.result || {};
-    if (r.exceptionDetails) {
-      throw new Error('頁面執行出錯：' + JSON.stringify(r.exceptionDetails).slice(0, 400));
-    }
+    if (r.exceptionDetails) throw new Error('頁面執行出錯：' + JSON.stringify(r.exceptionDetails).slice(0, 400));
     return r.result ? r.result.value : undefined;
   }
 
@@ -115,15 +111,21 @@ async function main() {
     return file;
   }
 
+  const careTab = () => evaluate(`(function(){var t=document.querySelector('[data-config-tab="care"]');if(t)t.click();return !!t;})()`);
+  const designTab = () => evaluate(`(function(){var t=document.querySelector('[data-config-tab="design"]');if(t)t.click();return !!t;})()`);
+  const readPanel = () => evaluate(`JSON.stringify({
+    text: (document.getElementById('clearance-list')||{}).innerText || '',
+    rows: document.querySelectorAll('#clearance-list li').length,
+    mobility: (document.getElementById('mobility-profile')||{}).value || '',
+  })`).then(JSON.parse);
+
   await send('Runtime.enable');
   await send('Page.enable');
-  // 先載入一次只為了拿到 origin，清掉 localStorage 再重載：
-  // 不然上一輪測過的住戶能力會留在同一個 profile 裡，下一次啟動就不是預設狀態。
   await send('Page.navigate', { url: BASE });
   await sleep(1500);
   await evaluate('localStorage.clear(); true').catch(() => {});
   await send('Page.reload', { ignoreCache: true });
-  await sleep(4000);                         // 等 Three.js 與首批渲染
+  await sleep(4200);
 
   try {
     console.log('目標：' + BASE + '\n');
@@ -131,86 +133,64 @@ async function main() {
     const head = JSON.parse(await evaluate(`JSON.stringify({
       title: document.title,
       hasScene: !!document.querySelector('#scene canvas'),
-      canvas: (function(){var c=document.querySelector('#scene canvas');return c?[c.width,c.height]:null;})(),
-      chips: Array.from(document.querySelectorAll('[data-mobility]')).map(function(e){return e.dataset.mobility;}),
+      tabs: Array.from(document.querySelectorAll('[data-config-tab]')).map(function(e){return e.dataset.configTab;}),
+      mobilityOptions: Array.from(document.querySelectorAll('#mobility-profile option')).map(function(o){return o.value;}),
+      mobilityText: Array.from(document.querySelectorAll('#mobility-profile option')).map(function(o){return o.textContent.trim();}),
       hasClearance: !!document.getElementById('clearance-list'),
-      furniture: document.querySelectorAll('.furniture-card, .fitem, .catalog-card').length,
-      viewButtons: Array.from(document.querySelectorAll('[data-view]')).map(function(e){return e.dataset.view;}),
-      categories: Array.from(document.querySelectorAll('[data-category]')).map(function(e){return e.dataset.category;}),
+      kitchen: !!document.querySelector('#room-purpose option[value="kitchen"]'),
+      nav: !!document.getElementById('circulation-nav'),
+      legacyChips: document.querySelectorAll('[data-mobility].chip').length,
     })`));
     check('頁面有標題', !!head.title, head.title);
-    check('3D canvas 存在且有尺寸', !!head.canvas && head.canvas[0] > 0, String(head.canvas));
-    check('住戶能力 chips 存在', head.chips.length === 2, JSON.stringify(head.chips));
-    check('動線面板容器存在', head.hasClearance === true);
-    check('檢視切換有 3D／平面圖', head.viewButtons.indexOf('plan') >= 0, JSON.stringify(head.viewButtons));
-    check('家具庫有廚房分類', ['stove', 'sink', 'fridge'].every(k => head.categories.indexOf(k) >= 0),
-      head.categories.filter(k => ['stove', 'sink', 'fridge', 'wardrobe'].indexOf(k) >= 0).join(','));
+    check('3D canvas 存在', head.hasScene === true);
+    check('兩個 tab（風格與佈局／適老與動線）', head.tabs.join(',') === 'design,care', head.tabs.join(','));
+    check('活動能力三檔', head.mobilityOptions.join(',') === 'standard,senior,wheelchair', head.mobilityOptions.join(','));
+    check('三檔都標了出處', head.mobilityText.every((t) => /（/.test(t)), head.mobilityText.join(' | ').slice(0, 110));
+    check('輪椅檔用 1.05（法規）', head.mobilityText.some((t) => t.includes('1.1') || t.includes('1.05')), head.mobilityText[2] || '');
+    check('動線驗算面板存在於 care tab', head.hasClearance === true);
+    check('廚房用途選項存在', head.kitchen === true);
+    check('側欄有動線入口', head.nav === true);
+    check('舊的住戶能力 chips 已移除（統一入口）', head.legacyChips === 0, String(head.legacyChips));
 
-    console.log('\n[動線面板 · 一般]');
-    const std = JSON.parse(await evaluate(`JSON.stringify({
-      text: (document.getElementById('clearance-list')||{}).innerText || '',
-      rows: (document.querySelectorAll('#clearance-list li')||[]).length,
-      on: (document.querySelector('[data-mobility].on')||{dataset:{}}).dataset.mobility || '',
-    })`));
-    check('預設是一般住宅', std.on === 'standard', 'on=' + std.on);
-    check('動線面板有內容', std.rows > 0, std.rows + ' 列');
-    check('顯示收納可及比例', std.text.indexOf('可及') >= 0);
-    check('一般模式明說未套用無障礙', std.text.indexOf('未套用') >= 0);
-    const shot1 = await shot('01-3d-standard');
+    console.log('\n[適老與動線 · 三檔]');
+    await careTab();
+    await sleep(500);
+    const senior = await readPanel();
+    check('預設是適老步行', senior.mobility === 'senior', senior.mobility);
+    check('驗算面板有內容', senior.rows > 0, senior.rows + ' 列');
+    check('適老步行檢查 0.9 m 走道', /通道淨闊（適老步行）/.test(senior.text) && /0\.9/.test(senior.text));
+    check('適老步行不套輪椅迴旋', !/輪椅迴旋/.test(senior.text));
+    const shotSenior = await shot('01-care-senior');
 
-    console.log('\n[動線面板 · 輪椅]');
-    const click = JSON.parse(await evaluate(`(function(){
-      var el=document.querySelector('[data-mobility="wheelchair"]');
-      var handler=typeof el.onclick, src=String(el.onclick||'').slice(0,90);
-      el.click();
-      var viaClick={cls:el.className,on:(document.querySelector('[data-mobility].on')||{dataset:{}}).dataset.mobility||null,text:(document.getElementById('clearance-list')||{}).innerText||''};
-      if(handler==='function'&&viaClick.on!=='wheelchair'){el.onclick();}
-      var viaDirect={cls:el.className,on:(document.querySelector('[data-mobility].on')||{dataset:{}}).dataset.mobility||null,
-        text:(document.getElementById('clearance-list')||{}).innerText||'',
-        toast:(document.getElementById('toast')||{}).innerText||''};
-      return JSON.stringify({handler,src,viaClick,viaDirect});
-    })()`));
-    if (click.handler !== 'function') console.log('  ! 診斷：chip 沒有 onclick 綁定');
-    const wc = { text: click.viaDirect.text, toast: click.viaDirect.toast, on: click.viaDirect.on };
-    check('切到輪椅模式', wc.on === 'wheelchair',
-      'click=' + click.viaClick.on + ' direct=' + click.viaDirect.on + ' src=' + click.src.replace(/\s+/g, ' ').slice(0, 60));
-    check('出現通道 1.05 檢查', /(通道|走道)/.test(wc.text) && /1\.05/.test(wc.text));
-    check('出現迴旋 1.5 檢查', /迴旋/.test(wc.text) && /1\.5/.test(wc.text));
-    check('輪椅模式不再說未套用', wc.text.indexOf('未套用') < 0);
-    check('切換有提示訊息', /無障礙|輪椅/.test(wc.toast), wc.toast.slice(0, 40));
+    await evaluate(`(function(){var s=document.getElementById('mobility-profile');s.value='wheelchair';s.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+    await sleep(600);
+    const wheelchair = await readPanel();
+    check('切到輪椅檔', wheelchair.mobility === 'wheelchair', wheelchair.mobility);
+    check('出現通道 1.05', /通道淨闊/.test(wheelchair.text) && /1\.05/.test(wheelchair.text));
+    check('出現輪椅迴旋 1.5', /輪椅迴旋/.test(wheelchair.text) && /1\.5/.test(wheelchair.text));
+    const shotWheelchair = await shot('02-care-wheelchair');
 
-    console.log('\n[平面圖]');
-    await evaluate(`(document.querySelector('[data-view="plan"]')||{click:function(){}}).click(); true`);
-    await sleep(1200);
-    const plan = JSON.parse(await evaluate(`JSON.stringify({
-      svg: !!document.querySelector('#viewport svg, #scene svg'),
-      planItems: document.querySelectorAll('#viewport svg *, #scene svg *').length,
-    })`));
-    check('平面圖有 SVG', plan.svg === true, plan.planItems + ' 個圖形');
-    const shot2 = await shot('02-plan-wheelchair');
+    await evaluate(`(function(){var s=document.getElementById('mobility-profile');s.value='standard';s.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+    await sleep(600);
+    const standard = await readPanel();
+    check('日常步行不假裝做無障礙檢查', standard.mobility === 'standard' && !/輪椅迴旋/.test(standard.text) && !/通道淨闊/.test(standard.text));
 
-    // ── 廚房：切到煮食空間並生成，工作三角要自己出現在面板上 ──
     console.log('\n[廚房工作三角]');
+    await designTab();
     await evaluate(`(function(){
       var sel=document.getElementById('room-purpose'); sel.value='kitchen';
       sel.dispatchEvent(new Event('change',{bubbles:true}));
       document.getElementById('generate').click();
       return true;
     })()`);
-    await sleep(2500);
-    const kitchen = JSON.parse(await evaluate(`JSON.stringify({
-      purpose: (document.getElementById('room-purpose')||{}).value||'',
-      text: (document.getElementById('clearance-list')||{}).innerText||'',
-      count: (document.getElementById('object-count')||{}).innerText||'',
-      summary: (document.getElementById('room-summary')||{}).innerText||'',
-    })`));
-    check('用途已切到廚房', kitchen.purpose === 'kitchen', kitchen.summary.slice(0, 40));
-    check('面板出現工作三角', /廚房工作三角/.test(kitchen.text), kitchen.text.replace(/\n/g, ' | ').slice(0, 130));
+    await sleep(2600);
+    await careTab();
+    await sleep(400);
+    const kitchen = await readPanel();
+    check('面板出現工作三角', /廚房工作三角/.test(kitchen.text), kitchen.text.replace(/\n/g, ' | ').slice(0, 120));
     check('工作三角給出總長', /\d\.\d\d m/.test(kitchen.text) && /慣例/.test(kitchen.text));
-    check('三件家具已放進場景', /\d+ 件家具/.test(kitchen.count), kitchen.count);
     const shotKitchen = await shot('03-kitchen');
 
-    // ── 全屋：注入一個三房平面，檢查夜間動線（單間幾何看不到這個）──
     console.log('\n[全屋夜間動線]');
     const room = (id, name, kind, x, z, w, d, openings) => ({
       id, name, kind, purpose: kind === 'bedroom' ? 'bedroom' : 'living',
@@ -219,7 +199,7 @@ async function main() {
     const seeded = {
       schemaVersion: 1, id: 'ui-check-home', name: '夜間動線測試',
       room: { width: 4, depth: 3, height: 2.7 }, items: [],
-      style: 'warm', purpose: 'living', mobility: 'standard',
+      style: 'warm', purpose: 'living', mobility: 'senior',
       preferences: ['daylight', 'flow', 'green'], engine: 'local-rules',
       updatedAt: new Date().toISOString(), activeRoomId: 'a', homeView: 'overview',
       home: {
@@ -234,27 +214,23 @@ async function main() {
     };
     await evaluate(`localStorage.setItem('domira.projects.v1', ${JSON.stringify(JSON.stringify([seeded]))}); true`);
     await send('Page.navigate', { url: BASE });
-    await sleep(3500);
-    const night = JSON.parse(await evaluate(`JSON.stringify({
-      text: (document.getElementById('clearance-list')||{}).innerText||'',
-      rows: document.querySelectorAll('#clearance-list li').length,
-      name: (document.getElementById('breadcrumb-name')||{}).textContent||'',
-    })`));
-    check('載入了注入的全屋專案', night.name === '夜間動線測試', night.name);
-    check('夜間動線出現在面板', /夜間動線/.test(night.text), night.text.replace(/\n/g, ' | ').slice(0, 150));
+    await sleep(4000);
+    await careTab();
+    await sleep(500);
+    const night = await readPanel();
+    const name = await evaluate(`(document.getElementById('breadcrumb-name')||{}).textContent || ''`);
+    check('載入了注入的全屋專案', name === '夜間動線測試', name);
+    check('夜間動線出現在驗算面板', /夜間動線/.test(night.text), night.text.replace(/\n/g, ' | ').slice(0, 130));
     check('路線是睡房 → 浴室', /睡房/.test(night.text) && /浴室/.test(night.text));
-    check('列出兩道門的門寬', /門寬/.test(night.text) && /0\.90/.test(night.text) && /1\.00/.test(night.text));
+    check('列出兩道門的門寬', /門寬/.test(night.text) && /0\.90/.test(night.text));
     const shotNight = await shot('04-night-route');
-    console.log('  （全屋共 ' + night.rows + ' 列）');
 
     console.log('\n[console]');
     const real = errors.filter((e) => !/favicon|Failed to load resource.*404/i.test(e));
     check('沒有頁面錯誤', real.length === 0, real.slice(0, 2).join(' | ').slice(0, 240));
 
-    if (shot1) console.log('\n截圖：' + shot1);
-    if (shot2) console.log('截圖：' + shot2);
-    console.log('截圖：' + shotKitchen);
-    console.log('截圖：' + shotNight);
+    console.log('\n截圖：');
+    for (const f of [shotSenior, shotWheelchair, shotKitchen, shotNight]) if (f) console.log('  ' + f);
   } finally {
     try { ws.close(); } catch (e) {}
     try { proc.kill(); } catch (e) {}

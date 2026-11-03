@@ -145,7 +145,7 @@ export function refineLayoutOrientation(input,room,{purpose='living',strict=true
 
 // 動線檢查：純幾何。**法定**、**無障礙**、**設計慣例**三類必須分開標，不能混成同一種「建議」。
 // walkway／turning 出自《設計手冊：暢通無阻的通道 2008》，但那是**無障礙通道**的要求，一般住宅單位內部並非強制；標成 accessibility 而非 legal。
-export const CLEARANCE_RULES={walkway:{label:'通道淨闊',min:1.05,accessibility:true,ref:'《設計手冊：暢通無阻的通道 2008》（無障礙通道）'},turning:{label:'輪椅迴旋',min:1.5,accessibility:true,ref:'《設計手冊：暢通無阻的通道 2008》（無障礙通道）'},bedSide:{label:'床邊通道',min:.6,legal:false},sofaToTable:{label:'沙發到茶几',min:.3,max:.4,legal:false},dining:{label:'餐桌周圍',min:.75,legal:false}};
+export const CLEARANCE_RULES={walkway:{label:'通道淨闊',min:1.05,accessibility:true,ref:'《設計手冊：暢通無阻的通道 2008》（無障礙通道）'},seniorWalkway:{label:'通道淨闊（適老步行）',min:.9,legal:false,ref:null},turning:{label:'輪椅迴旋',min:1.5,accessibility:true,ref:'《設計手冊：暢通無阻的通道 2008》（無障礙通道）'},bedSide:{label:'床邊通道',min:.6,legal:false},sofaToTable:{label:'沙發到茶几',min:.3,max:.4,legal:false},dining:{label:'餐桌周圍',min:.75,legal:false}};
 // 用 0.1 m 網格算「最長暢通帶」與「最大空正方形」：走道是長條、迴旋是方塊，兩者不能互相代替。
 function occupancyGrid(items,room,step=.1){const W=Math.max(1,Math.round(room.width/step)),D=Math.max(1,Math.round(room.depth/step)),grid=new Uint8Array(W*D);for(const it of items){const b=itemBounds(it);if(it.type==='rug')continue;const x0=Math.round((it.x-b.w/2+room.width/2)/step),x1=Math.round((it.x+b.w/2+room.width/2)/step),z0=Math.round((it.z-b.d/2+room.depth/2)/step),z1=Math.round((it.z+b.d/2+room.depth/2)/step);for(let z=Math.max(0,z0);z<Math.min(D,z1);z++)for(let x=Math.max(0,x0);x<Math.min(W,x1);x++)grid[z*W+x]=1;}return {grid,W,D,step};}
 function freeMetrics(items,room){const {grid,W,D,step}=occupancyGrid(items,room);let maxRun=0;for(let z=0;z<D;z++){let run=0;for(let x=0;x<W;x++){if(grid[z*W+x])run=0;else{run++;if(run>maxRun)maxRun=run;}}}const dp=new Int32Array(W*D);let best=0;for(let z=0;z<D;z++)for(let x=0;x<W;x++){const i=z*W+x;if(grid[i]){dp[i]=0;continue;}dp[i]=1+Math.min(x>0?dp[i-1]:0,z>0?dp[i-W]:0,x>0&&z>0?dp[i-W-1]:0);if(dp[i]>best)best=dp[i];}return {run:maxRun*step,square:best*step};}
@@ -154,10 +154,12 @@ function gapBetween(a,b){const ab=itemBounds(a),bb=itemBounds(b);return Math.max
 // 夜間動線的最小一環：門寬。真正的「床→廁所→取衣→穿鞋」需要房間相鄰圖，
 // 現在只有 openings（哪面牆有門），不知道門通往哪間房，所以只能檢查寬度。
 export function checkDoorWidths(rooms,options={}){const min=options.mobility==='wheelchair'?.85:.8,out=[];for(const r of rooms||[]){for(const d of r.openings||[]){if(d.kind!=='door')continue;const edgeLen=['top','bottom'].includes(d.edge)?r.width:r.depth,w=Math.round(d.width*edgeLen*100)/100;out.push({room:r.name,edge:d.edge,width:w,min,status:w>=min?'pass':'warn',mobility:options.mobility||'standard'});}}return out;}
-export const ACCESS_MODES={standard:{label:'一般',accessibility:false,source:null},wheelchair:{label:'輪椅／行動不便',accessibility:true,source:'《設計手冊：暢通無阻的通道 2008》'}};
+export const ACCESS_MODES={standard:{label:'日常步行',accessibility:false,source:null},senior:{label:'適老步行',accessibility:false,minRun:.9,source:null},wheelchair:{label:'輪椅／行動不便',accessibility:true,minRun:1.05,source:'《設計手冊：暢通無阻的通道 2008》'}};
 export function checkClearances(items,room,options={}){const out=[],first=t=>items.find(i=>i.type===t),{run,square}=freeMetrics(items,room),mode=ACCESS_MODES[options.mobility]||ACCESS_MODES.standard;
  const push=(id,actual,detail)=>{const r=CLEARANCE_RULES[id];const bad=actual<r.min||(r.max&&actual>r.max);out.push({id,label:r.label,actual:Math.round(actual*100)/100,min:r.min,max:r.max??null,legal:!!r.legal,accessibility:!!r.accessibility,ref:r.ref??null,status:bad?(r.legal?'fail':'warn'):'pass',detail});};
  if(mode.accessibility){push('walkway',run,`最寬的連續通道帶 ${run.toFixed(2)} m`);push('turning',square,`最大空正方形 ${square.toFixed(2)}×${square.toFixed(2)} m`);}
+ // 適老步行沒有法規可引，只檢查「走道至少 0.9 m」這條慣例，不套輪椅的 1.05／1.5。
+ else if(mode.minRun)push('seniorWalkway',run,`最寬的連續通道帶 ${run.toFixed(2)} m`);
  const bed=first('bed');if(bed)push('bedSide',sideGap(bed,room),`床的可用單側通道 ${sideGap(bed,room).toFixed(2)} m`);
  const sofa=first('sofa'),table=first('table');if(sofa&&table){const g=gapBetween(sofa,table);push('sofaToTable',g,`沙發與茶几邊到邊 ${g.toFixed(2)} m`);}
  const dining=first('dining');if(dining){const others=items.filter(i=>i.id!==dining.id);const near=others.length?Math.min(...others.map(o=>gapBetween(dining,o))):sideGap(dining,room);push('dining',near,`餐桌到最近家具 ${near.toFixed(2)} m`);}
