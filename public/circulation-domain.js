@@ -1,5 +1,7 @@
-// Local geometric planning; widths are user-adjustable design targets, not certification.
-export const MOBILITY_PROFILES={standard:{name:'日常步行',width:.7},senior:{name:'適老步行',width:.9},assisted:{name:'助行器／輪椅預留',width:1.2}};
+// Local geometric planning; widths are design targets, not certification.
+// 三檔數值必須能說出來源：只有輪椅檔有法規可引，其餘兩檔是設計慣例。
+// width 是「走道淨寬」，不是迴旋空間；迴旋另由 checkClearances 的 turning 檢查。
+export const MOBILITY_PROFILES={standard:{name:'日常步行',width:.7,basis:'經驗值'},senior:{name:'適老步行',width:.9,basis:'經驗值'},wheelchair:{name:'輪椅／行動不便',width:1.05,basis:'《設計手冊》'}};
 export function planningSignature(project){return JSON.stringify([project.id,project.activeRoomId,project.homeView,project.room,project.items.map(i=>[i.id,i.type,i.w,i.d,i.x,i.z,i.rotation])]);}
 export function pointClearance(point,item){const a=(item.rotation||0)*Math.PI/180,dx=point[0]-item.x,dz=point[1]-item.z,x=dx*Math.cos(a)+dz*Math.sin(a),z=-dx*Math.sin(a)+dz*Math.cos(a);return Math.hypot(Math.max(Math.abs(x)-item.w/2,0),Math.max(Math.abs(z)-item.d/2,0));}
 export function planCirculation(project,{profile='senior',entry='bottom',offset=.5,targetId,step=.15}={}){
