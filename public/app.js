@@ -129,7 +129,7 @@ quoteStudio=createQuoteStudio({getState:()=>state.home?{...state,name:state.name
 $('#quote-open').onclick=()=>quoteStudio.open();$('#quote-nav').onclick=()=>quoteStudio.open();
 renderStudio=createRenderStudio({scene,getState:()=>state,modal,closeModal,notify,icons});document.querySelector('#render-open').onclick=()=>{ensureRoomEdit();renderStudio.open();};document.querySelector('#render-nav').onclick=()=>{ensureRoomEdit();renderStudio.open();};
 circulationStudio=createCirculationStudio({getState:()=>state,scene,save,ensureRoomEdit,stopAR,refresh:()=>{renderClearance();save();}});
-for(const tab of $$('[data-config-tab]'))tab.onclick=()=>{$$('[data-config-tab]').forEach(t=>{t.classList.toggle('active',t===tab);t.setAttribute('aria-selected',String(t===tab));});$('#circulation-panel').hidden=tab.dataset.configTab!=='care';$('#design-config').hidden=tab.dataset.configTab==='care';};
+for(const tab of $$('[data-config-tab]'))tab.onclick=()=>{$$('[data-config-tab]').forEach(t=>{t.classList.toggle('active',t===tab);t.setAttribute('aria-selected',String(t===tab));});$('#circulation-panel').hidden=tab.dataset.configTab!=='care';$('#design-config').hidden=tab.dataset.configTab==='care';if(tab.dataset.configTab==='care')circulationStudio?.update();};
 $('#circulation-nav').onclick=()=>circulationStudio.open();
 sync();renderClearance();save();renderCatalog();fetch(API_BASE+'/api/health').then(r=>r.json()).then(data=>{capabilities=data;if(data.layout==='remote')$('#engine-label').textContent='AI 服務已連線 · 準備規劃你的空間';}).catch(()=>{});
 
