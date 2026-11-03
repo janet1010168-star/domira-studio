@@ -11,7 +11,7 @@ export function homeRoomData(room){return {width:room.width,depth:room.depth,hei
 export function syncHomeProject(project){if(!project.home)return;const active=project.home.rooms.find(r=>r.id===project.activeRoomId);if(!active)throw new Error('找不到目前房間。');active.items=project.items;active.style=project.style;active.purpose=project.purpose;active.furnitureAdvice=project.furnitureAdvice||null;active.layoutDescription=project.layoutDescription||null;active.engine=project.engine||'local-rules';}
 export function homeItems(project,world=false){if(!project.home)return project.items;return project.home.rooms.flatMap(r=>(r.id===project.activeRoomId?project.items:r.items).map(i=>({...i,...(world?{x:i.x+r.x,z:i.z+r.z}:{}),roomId:r.id,roomName:r.name})));}
 export function planWalls(home){const lines=new Map();for(const room of home.rooms){const x=room.x-room.width/2,z=room.z-room.depth/2;for(const edge of ['top','bottom','left','right']){const axis=['top','bottom'].includes(edge)?'x':'z',coordinate=axis==='x'?z+(edge==='bottom'?room.depth:0):x+(edge==='right'?room.width:0),start=axis==='x'?x:z,length=axis==='x'?room.width:room.depth,key=axis+':'+Math.round(coordinate*100),openings=room.openings.filter(o=>o.edge===edge).map(o=>({start:start+o.offset*length,end:start+(o.offset+o.width)*length,kind:o.kind}));if(!lines.has(key))lines.set(key,{axis,coordinate,edges:[]});lines.get(key).edges.push({start,end:start+length,height:room.height,openings});}}
- const segments=[];for(const {axis,coordinate,edges} of lines.values()){const cuts=[...new Set(edges.flatMap(e=>[e.start,e.end,...e.openings.flatMap(o=>[o.start,o.end])]).map(n=>Math.round(n*1000)/1000))].sort((a,b)=>a-b);for(let i=1;i<cuts.length;i++){const start=cuts[i-1],end=cuts[i],middle=(start+end)/2,cover=edges.filter(e=>middle>=e.start-.001&&middle<=e.end+.001);if(!cover.length||end-start<.015)continue;const openings=cover.flatMap(e=>e.openings).filter(o=>middle>=o.start&&middle<=o.end),kind=openings.some(o=>o.kind==='door')?'door':openings.length?'window':'wall';segments.push({axis,x:axis==='x'?middle:coordinate,z:axis==='z'?middle:coordinate,length:end-start,height:Math.max(...cover.map(e=>e.height)),kind});}}return segments;}
+ const segments=[];for(const {axis,coordinate,edges} of lines.values()){const cuts=[...new Set(edges.flatMap(e=>[e.start,e.end,...e.openings.flatMap(o=>[o.start,o.end])]).map(n=>Math.round(n*1000)/1000))].sort((a,b)=>a-b);for(let i=1;i<cuts.length;i++){const start=cuts[i-1],end=cuts[i],middle=(start+end)/2,cover=edges.filter(e=>middle>=e.start-.001&&middle<=e.end+.001);if(!cover.length||end-start<.015)continue;const openings=cover.flatMap(e=>e.openings).filter(o=>middle>=o.start&&middle<=o.end),kind=openings.some(o=>o.kind==='door')?'door':openings.length?'window':'wall';segments.push({axis,x:axis==='x'?middle:coordinate,z:axis==='z'?middle:coordinate,length:end-start,height:Math.max(...cover.map(e=>e.height)),kind});}}return mergeNearbyWalls(segments);}
 export function homePlanSVG(home){const width=900,scale=780/Math.max(home.width,home.depth),w=home.width*scale,h=home.depth*scale,ox=(width-w)/2,oy=65;const safe=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));return `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="${h+140}" viewBox="0 0 900 ${h+140}"><rect width="100%" height="100%" fill="#10171b"/><text x="50" y="32" fill="#d1e4d7" font-size="17" font-family="sans-serif">DOMIRA / ${home.rooms.length} 個空間 · ${home.width.toFixed(2)} × ${home.depth.toFixed(2)} m</text>${home.rooms.map(r=>`<rect x="${ox+(r.x-r.width/2+home.width/2)*scale}" y="${oy+(r.z-r.depth/2+home.depth/2)*scale}" width="${r.width*scale}" height="${r.depth*scale}" fill="${HOME_COLORS[r.kind]||HOME_COLORS.other}" opacity=".24"/>`).join('')}${planWalls(home).map(s=>{const x=ox+(s.x+home.width/2)*scale,y=oy+(s.z+home.depth/2)*scale,half=s.length*scale/2;return `<line x1="${s.axis==='x'?x-half:x}" x2="${s.axis==='x'?x+half:x}" y1="${s.axis==='z'?y-half:y}" y2="${s.axis==='z'?y+half:y}" stroke="${s.kind==='door'?'#d2b77f':s.kind==='window'?'#7eafbf':'#d5ddd4'}" stroke-width="${s.kind==='wall'?3:2}" ${s.kind==='door'?'stroke-dasharray="4 5"':''}/>`;}).join('')}${home.rooms.flatMap(r=>(r.items||[]).map(i=>{const color=/^#[0-9a-f]{6}$/i.test(i.color||'')?i.color:'#8fa68f';return `<g transform="translate(${ox+(r.x+i.x+home.width/2)*scale} ${oy+(r.z+i.z+home.depth/2)*scale}) rotate(${i.rotation})"><rect x="${-i.w*scale/2}" y="${-i.d*scale/2}" width="${i.w*scale}" height="${i.d*scale}" rx="3" fill="${color}" fill-opacity="${i.type==='rug'?.2:.7}" stroke="#d0e1d8" stroke-opacity=".4"/><title>${safe(i.name||i.type)}</title></g>`;})).join('')}${home.rooms.map(r=>`<text x="${ox+(r.x+home.width/2)*scale}" y="${oy+(r.z+home.depth/2)*scale-4}" text-anchor="middle" fill="#e4eee7" font-size="14" font-family="sans-serif">${safe(r.name)}<tspan x="${ox+(r.x+home.width/2)*scale}" dy="19" font-size="10" fill="#a6b9ac">${r.width.toFixed(2)} × ${r.depth.toFixed(2)} m</tspan></text>`).join('')}<text x="50" y="${h+115}" fill="#a7bbae" font-size="11" font-family="sans-serif">AI 矩形近似 · 金色虛線為門洞 / 藍線為窗 · 需實測核對，非施工圖</text></svg>`;}
 
 // ── 房間相鄰圖：方向 3 的前置 ──────────────────────────────────────────
@@ -141,14 +141,14 @@ function snapSharedWalls(home,tol=1.4){
    const bx0=b.x-b.width/2,bx1=b.x+b.width/2,bz0=b.z-b.depth/2,bz1=b.z+b.depth/2;
    const oy=Math.min(az1,bz1)-Math.max(az0,bz0),ox=Math.min(ax1,bx1)-Math.max(ax0,bx0);
    // 左右相鄰（z 有重疊）：a 在左、b 在右
-   if(oy>Math.min(a.depth,b.depth)*.4){
+   if(oy>Math.min(a.depth,b.depth)*.25){
     const gap=bx0-ax1;
     if(gap>.01&&gap<tol){if(a.width<=b.width)a.x+=gap;else b.x-=gap;moved=true;}
     const gap2=ax0-bx1;
     if(gap2>.01&&gap2<tol){if(a.width<=b.width)a.x-=gap2;else b.x+=gap2;moved=true;}
    }
    // 上下相鄰（x 有重疊）：a 在上、b 在下
-   if(ox>Math.min(a.width,b.width)*.4){
+   if(ox>Math.min(a.width,b.width)*.25){
     const gap=bz0-az1;
     if(gap>.01&&gap<tol){if(a.depth<=b.depth)a.z+=gap;else b.z-=gap;moved=true;}
     const gap2=az0-bz1;
@@ -223,4 +223,36 @@ function mergeOpenPlanRooms(rooms){
  }
  if(out.length!==rooms.length){rooms.length=0;rooms.push(...out);}
  return warnings;
+}
+
+
+// 合併相近的平行牆線：房間 rect 之間有縫時，同一道牆會被算成兩條（縫兩側各一條），
+// 3D 看起來就是「沒牆的地方多了一道牆」。把同軸、座標差 <0.6 m、區間重疊的牆線併成一條
+// （座標取平均、長度取聯集）。只合併 kind='wall'——門洞與窗要保留原位，不能併。
+export function mergeNearbyWalls(segments,tol=.8){
+ if(!Array.isArray(segments))return segments;
+ const walls=segments.filter(s=>s.kind==='wall'),others=segments.filter(s=>s.kind!=='wall');
+ const out=[];
+ for(const s of walls){
+  const coord=s.axis==='x'?'z':'x',along=s.axis==='x'?'x':'z';
+  let hit=null;
+  for(const m of out){
+   if(m.axis!==s.axis)continue;
+   if(Math.abs(m[coord]-s[coord])>tol+1e-6)continue;
+   const ms=m[along]-m.length/2,me=m[along]+m.length/2;
+   const ss=s[along]-s.length/2,se=s[along]+s.length/2;
+   if(Math.min(me,se)-Math.max(ms,ss)<=.01)continue;
+   hit=m;break;
+  }
+  if(hit){
+   const coord2=hit.axis==='x'?'z':'x',along2=hit.axis==='x'?'x':'z';
+   const ms=hit[along2]-hit.length/2,me=hit[along2]+hit.length/2;
+   const ss=s[along2]-s.length/2,se=s[along2]+s.length/2;
+   const start=Math.min(ms,ss),end=Math.max(me,se);
+   hit[along2]=start+(end-start)/2;hit.length=end-start;
+   hit[coord2]=Math.round(((hit[coord2]+s[coord2])/2)*1000)/1000;
+   hit.height=Math.max(hit.height,s.height);
+  } else out.push({...s});
+ }
+ return [...out,...others];
 }
