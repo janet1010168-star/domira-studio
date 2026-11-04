@@ -77,3 +77,17 @@ test('grid solver packs rooms into columns without overlap or overflow',()=>{
  const bed=rooms.find(x=>x.name==='睡房'),kit=rooms.find(x=>x.name==='廚房');
  assert.ok(Math.abs((bed.z+bed.depth/2)-(kit.z-kit.depth/2))<.05,'同欄房間要上下貼合');
 });
+
+// 牆識別：adjacent 標了 wall:false 的邊界是開放連通，不該生成牆（否則客廳與走廊之間會多出一道牆）。
+test('open boundaries produce no wall segment',()=>{
+ const room=(id,name,kind,x,z,w,d,adjacent=[])=>({id,name,kind,purpose:kind,x,z,width:w,depth:d,height:2.7,confidence:'high',notes:'',openings:[],adjacent,items:[]});
+ const home={format:'domira.home.v1',width:10,depth:8,height:2.7,source:'ai-floorplan',scaleConfirmed:true,summary:'',warnings:[],rooms:[
+  room('a','客廳','living',-2.5,0,5,4,[{to:'走廊',edge:'right',wall:false}]),
+  room('b','走廊','hall',2.5,0,5,4,[{to:'客廳',edge:'left',wall:false}]),
+ ]};
+ const middle=planWalls(home).filter(s=>s.kind==='wall'&&s.axis==='z'&&Math.abs(s.x)<.15);
+ assert.equal(middle.length,0,'開放連通的邊界不該生成牆');
+ const closed={...home,rooms:[room('a','客廳','living',-2.5,0,5,4,[{to:'走廊',edge:'right',wall:true}]),room('b','走廊','hall',2.5,0,5,4,[{to:'客廳',edge:'left',wall:true}])]};
+ const withWall=planWalls(closed).filter(s=>s.kind==='wall'&&s.axis==='z'&&Math.abs(s.x)<.15);
+ assert.ok(withWall.length>=1,'有牆的邊界要生成牆');
+});
