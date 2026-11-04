@@ -20,10 +20,12 @@ export function validatePlanAnalysis(raw){if(!raw||!Array.isArray(raw.rooms)||ra
 const mergeWarnings=[...mergeSameNameRooms(rooms),...mergeOpenPlanRooms(rooms)];
  return {format:'domira.floorplan-analysis.v1',rooms,scale:measured||{width:dim('width'),depth:dim('depth'),basis:raw.scale?.basis==='dimensioned'?'dimensioned':'unknown'},dimensions:dg,frame:{w:right-left,h:bottom-top},summary:String(raw.summary||'請逐間核對 AI 辨識結果。').slice(0,500),warnings:[...(Array.isArray(raw.warnings)?raw.warnings:[]),...mergeWarnings,...relationWarnings].slice(0,8).map(s=>String(s).slice(0,200)),model:'deepseek-flash',engine:'remote-vision'};}
 function resolveOverlaps(home){const rooms=home.rooms,hw=home.width/2,hd=home.depth/2,start=new Map(rooms.map(r=>[r.id,{x:r.x,z:r.z}]));for(let iter=0;iter<200;iter++){let worst=0;for(let i=0;i<rooms.length;i++)for(let j=i+1;j<rooms.length;j++){const a=rooms[i],b=rooms[j],ox=(a.width+b.width)/2-Math.abs(a.x-b.x),oz=(a.depth+b.depth)/2-Math.abs(a.z-b.z);if(ox<=.001||oz<=.001)continue;const s0=start.get(a.id),s1=start.get(b.id);if(s0&&(Math.abs(a.x-s0.x)>1||Math.abs(a.z-s0.z)>1))continue;if(s1&&(Math.abs(b.x-s1.x)>1||Math.abs(b.z-s1.z)>1))continue;if(Math.min(ox,oz)>.5)continue;worst=Math.max(worst,Math.min(ox,oz));const push=.6;if(ox<=oz){const s=(ox/2+.005)*push*(a.x>=b.x?1:-1);a.x+=s;b.x-=s;}else{const s=(oz/2+.005)*push*(a.z>=b.z?1:-1);a.z+=s;b.z-=s;}}for(const r of rooms){r.x=Math.min(hw-r.width/2,Math.max(-hw+r.width/2,r.x));r.z=Math.min(hd-r.depth/2,Math.max(-hd+r.depth/2,r.z));}if(worst<.01)break;}for(const r of rooms){r.x=roundHome(r.x);r.z=roundHome(r.z);}return home;}
-export function homeFromAnalysis(analysis,width,depth,height=2.7,strict=true,options={}){const a=validatePlanAnalysis(analysis);const fu=1000/Math.max(a.frame?.w||1000,a.frame?.h||1000),FW=(a.frame?.w||1000)*fu,FH=(a.frame?.h||1000)*fu,OX=(1000-FW)/2,OY=(1000-FH)/2;const rooms=a.rooms.map(r=>({id:r.id,name:r.name,kind:r.kind,purpose:['bedroom','dining','work'].includes(r.kind)?r.kind:'living',x:roundHome(((r.rect.x+r.rect.w/2-OX)/FW-.5)*width),z:roundHome(((r.rect.y+r.rect.h/2-OY)/FH-.5)*depth),width:roundHome(r.rect.w/FW*width),depth:roundHome(r.rect.h/FH*depth),height:Number(height),confidence:r.confidence,notes:r.notes,openings:r.openings,items:[]}));const home={format:'domira.home.v1',width:Number(width),depth:Number(depth),height:Number(height),source:'ai-floorplan',model:analysis.model||'deepseek-flash',scaleConfirmed:true,summary:a.summary,warnings:[...(a.warnings||[])],rooms};const stages=options.stages||['overlap','area','separate'];
+export function homeFromAnalysis(analysis,width,depth,height=2.7,strict=true,options={}){const a=validatePlanAnalysis(analysis);const fu=1000/Math.max(a.frame?.w||1000,a.frame?.h||1000),FW=(a.frame?.w||1000)*fu,FH=(a.frame?.h||1000)*fu,OX=(1000-FW)/2,OY=(1000-FH)/2;const rooms=a.rooms.map(r=>({id:r.id,name:r.name,kind:r.kind,purpose:['bedroom','dining','work'].includes(r.kind)?r.kind:'living',x:roundHome(((r.rect.x+r.rect.w/2-OX)/FW-.5)*width),z:roundHome(((r.rect.y+r.rect.h/2-OY)/FH-.5)*depth),width:roundHome(r.rect.w/FW*width),depth:roundHome(r.rect.h/FH*depth),height:Number(height),confidence:r.confidence,notes:r.notes,openings:r.openings,adjacent:r.adjacent||[],area_sqm:r.area_sqm,items:[]}));const home={format:'domira.home.v1',width:Number(width),depth:Number(depth),height:Number(height),source:'ai-floorplan',model:analysis.model||'deepseek-flash',scaleConfirmed:true,summary:a.summary,warnings:[...(a.warnings||[])],rooms};const stages=options.stages||['overlap','grid','separate'];
  const onStage=st=>stages.includes(st);
  let corrected=0;if(options.correctArea!==false){if(onStage('overlap'))resolveOverlaps(home);if(onStage('dimsnap'))snapToDimensionLines(home,a.dimensions);if(onStage('sharedsnap'))snapSharedWalls(home);if(onStage('overlap'))resolveOverlaps(home);const byId=onStage('area')?new Map(a.rooms.map(r=>[r.id,r])):new Map(),areaSkipped=[];for(const room of rooms){const target=byId.get(room.id)?.area_sqm;if(!target||target<=0)continue;const rectArea=room.width*room.depth,err=Math.abs(rectArea-target)/target;if(err<=.08)continue;if(err>.25){areaSkipped.push(room.name);continue;}const ratio=Math.min(1.35,Math.max(.55,Math.sqrt(target/rectArea)));room.width=roundHome(room.width*ratio);room.depth=roundHome(room.depth*ratio);corrected++;}if(areaSkipped.length)home.warnings.push('以下房間的矩形面積與圖上標註差超過 25%，已保留矩形尺寸（rect 可能含牆體或走道，硬縮會破壞相鄰關係），請人工核對：'+areaSkipped.join('、')+'。');
-  if(corrected){if(onStage('overlap'))resolveOverlaps(home);if(onStage('sharedsnap'))snapSharedWalls(home);if(onStage('overlap'))resolveOverlaps(home);home.warnings.push('已用圖上標註面積校正 '+corrected+' 間房的尺寸（面積優先於 rect 比例，個別牆線可能偏移）；因標註面積是淨面積、牆體未計入，嚴格重疊檢查已跳過。');}}const shrunkRooms=onStage('separate')?forceSeparate(home):[];if(shrunkRooms.length)home.warnings.push('以下房間與其他房間重疊，已自動縮小以保證可以生成：'+shrunkRooms.join('、')+'。請對照原圖核對尺寸。');return strict&&!corrected?validateHome(home):home;}
+  if(corrected){if(onStage('overlap'))resolveOverlaps(home);if(onStage('sharedsnap'))snapSharedWalls(home);if(onStage('overlap'))resolveOverlaps(home);home.warnings.push('已用圖上標註面積校正 '+corrected+' 間房的尺寸（面積優先於 rect 比例，個別牆線可能偏移）；因標註面積是淨面積、牆體未計入，嚴格重疊檢查已跳過。');}}if(onStage('topology'))solveTopology(rooms,home);
+ if(onStage('grid'))solveGrid(rooms,home);
+ const shrunkRooms=onStage('separate')?forceSeparate(home):[];if(shrunkRooms.length)home.warnings.push('以下房間與其他房間重疊，已自動縮小以保證可以生成：'+shrunkRooms.join('、')+'。請對照原圖核對尺寸。');return strict&&!corrected?validateHome(home):home;}
 export function validateHome(home){if(!home||home.format!=='domira.home.v1'||!['width','depth','height'].every(k=>finiteHome(home[k])&&home[k]>=(k==='height'?2:2)&&home[k]<=(k==='height'?6:40))||!Array.isArray(home.rooms)||!home.rooms.length||home.rooms.length>12)throw new Error('全屋長寬需為 2–40m、層高 2–6m，並包含 1–12 個空間。');const ids=new Set(),itemIds=new Set();let count=0;for(const r of home.rooms){if(typeof r.id!=='string'||ids.has(r.id))throw new Error('房間識別碼重複。');ids.add(r.id);if(!['x','z','width','depth','height'].every(k=>finiteHome(r[k]))||r.width<.6||r.depth<.6||r.width>20||r.depth>20||r.height<2||r.height>6||Math.abs(r.x)+r.width/2>home.width/2+.03||Math.abs(r.z)+r.depth/2>home.depth/2+.03)throw new Error((r.name||'房間')+' 的尺寸或位置超出全屋範圍；單間長寬需為 0.6–20m。');r.name=String(r.name||'未命名空間').slice(0,40);r.kind=HOME_KINDS[r.kind]?r.kind:'other';r.purpose=['living','reading','social','bedroom','work','dining'].includes(r.purpose)?r.purpose:'living';r.openings=(r.openings||[]).filter(o=>['top','right','bottom','left'].includes(o.edge)&&['door','window'].includes(o.kind)&&finiteHome(o.offset)&&finiteHome(o.width)&&o.offset>=0&&o.width>=.03&&o.offset+o.width<=1.001).slice(0,12);if(!Array.isArray(r.items)||r.items.length>50)throw new Error('單間家具不得超過 50 件。');for(const i of r.items){if(!CATALOG[i.type]||typeof i.id!=='string'||itemIds.has(i.id)||!['x','z','rotation','w','d','h'].every(k=>finiteHome(i[k]))||!['w','d','h'].every(k=>i[k]>0&&i[k]<15))throw new Error('全屋家具格式不正確或識別碼重複。');const b=itemBounds(i);if(Math.abs(i.x)+b.w/2>r.width/2+.05||Math.abs(i.z)+b.d/2>r.depth/2+.05)throw new Error('家具超出所屬房間。');itemIds.add(i.id);count++;}}if(count>120)throw new Error('全屋最多保留 120 件家具。');for(let i=0;i<home.rooms.length;i++)for(let j=i+1;j<home.rooms.length;j++){const a=home.rooms[i],b=home.rooms[j],x=(a.width+b.width)/2-Math.abs(a.x-b.x),z=(a.depth+b.depth)/2-Math.abs(a.z-b.z);if(x>.04&&z>.04)throw new Error(a.name+' 與 '+b.name+' 重疊，請核對房間座標及尺寸。');}return home;}
 export function homeRoomData(room){return {width:room.width,depth:room.depth,height:room.height,source:'floorplan-room',units:'m',coordinateSystem:'right-handed-y-up',planRoom:{name:room.name,kind:room.kind,openings:room.openings}};}
 export function syncHomeProject(project){if(!project.home)return;const active=project.home.rooms.find(r=>r.id===project.activeRoomId);if(!active)throw new Error('找不到目前房間。');active.items=project.items;active.style=project.style;active.purpose=project.purpose;active.furnitureAdvice=project.furnitureAdvice||null;active.layoutDescription=project.layoutDescription||null;active.engine=project.engine||'local-rules';}
@@ -327,4 +329,96 @@ function keepOuterOpenings(pieces,box){
   }
  }
  return out;
+}
+
+
+// 拓撲求解：用「誰跟誰共牆」＋「標註面積」重建佈局，不再相信 rect 的絕對位置。
+// 兩步：① 保留長寬比、用標註面積重算每間尺寸；② 迭代把共牆的兩間邊界拉到剛好相接。
+// 共牆關係來自 prompt 的 adjacent（第一步），面積來自圖上印刷的數字——兩者都比 rect 可靠。
+// 這是確定性的幾何計算：同樣的輸入一定得到同樣的輸出。
+export function solveTopology(rooms,home){
+ if(!Array.isArray(rooms)||rooms.length<2)return {links:0,moved:0};
+ const byName=new Map(rooms.map(r=>[r.name,r]));
+ // ① 面積 → 尺寸（保留原本的長寬比）
+ for(const r of rooms){
+  const target=Number.isFinite(r.area_sqm)&&r.area_sqm>0.5?r.area_sqm:r.width*r.depth;
+  const cur=r.width*r.depth;
+  if(!(cur>0.05)||!(target>0.5))continue;
+  const k=Math.sqrt(target/cur);
+  r.width=roundHome(Math.min(r.width*k,home.width));
+  r.depth=roundHome(Math.min(r.depth*k,home.depth));
+ }
+ // ② 共牆對齊：把兩間的共享邊界拉到剛好相接（各移一半）
+ const links=[];
+ for(const r of rooms)for(const a of r.adjacent||[]){
+  const t=byName.get(a.to)||rooms.find(x=>x.name.startsWith(String(a.to).slice(0,3)));
+  if(t&&t!==r)links.push([r,t,a.edge]);
+ }
+ const hw=home.width/2,hd=home.depth/2;
+ let moved=0;
+ for(let iter=0;iter<80&&links.length;iter++){
+  let any=false;
+  for(const [a,b,edge] of links){
+   if(edge==='right'||edge==='left'){
+    const dir=edge==='right'?1:-1,gap=(b.x-a.x)*dir-(a.width+b.width)/2;
+    if(Math.abs(gap)>0.04){const shift=gap/2*dir;a.x=roundHome(a.x+shift);b.x=roundHome(b.x-shift);any=true;moved++;}
+   }else{
+    const dir=edge==='bottom'?1:-1,gap=(b.z-a.z)*dir-(a.depth+b.depth)/2;
+    if(Math.abs(gap)>0.04){const shift=gap/2*dir;a.z=roundHome(a.z+shift);b.z=roundHome(b.z-shift);any=true;moved++;}
+   }
+  }
+  for(const r of rooms){r.x=Math.min(hw-r.width/2,Math.max(-hw+r.width/2,r.x));r.z=Math.min(hd-r.depth/2,Math.max(-hd+r.depth/2,r.z));}
+  if(!any)break;
+ }
+ return {links:links.length,moved};
+}
+
+
+// 行列切分求解器（v2）：放棄 rect 的絕對位置，只用它提供的「分欄」與「排序」資訊。
+// ① 按左邊界把房間分成若干欄（left 相近 <1.5 m 視為同一欄）；
+// ② 每欄寬 = 該欄房間寬度的最小值；欄內按 z 排序，高度 = 標註面積 / 欄寬（面積優先）；
+// ③ 總寬縮放到全屋寬、每欄高度縮放到全屋深，房間依序貼合堆疊。
+// 結果保證：欄內上下貼合、欄間左右貼合、無重疊，面積與圖上標註一致（縮放後略差）。
+export function solveGrid(rooms,home){
+ if(!Array.isArray(rooms)||rooms.length<2)return {cols:0};
+ const H=Math.max(2,home.depth),W=Math.max(2,home.width);
+ const sorted=[...rooms].sort((a,b)=>(a.x-a.width/2)-(b.x-b.width/2));
+ const cols=[];
+ for(const r of sorted){
+  const left=r.x-r.width/2,last=cols[cols.length-1];
+  if(last&&Math.abs(left-last.left)<1.5)last.rooms.push(r);
+  else cols.push({left,rooms:[r]});
+ }
+ let totalW=0;
+ for(const c of cols){
+  const colArea=c.rooms.reduce((sum,r)=>sum+(Number.isFinite(r.area_sqm)&&r.area_sqm>0.5?r.area_sqm:r.width*r.depth),0);
+  c.width=Math.max(1,colArea/H);
+  totalW+=c.width;
+  c.rooms.sort((a,b)=>a.z-b.z);
+  let used=0;
+  for(const r of c.rooms){
+   const target=Number.isFinite(r.area_sqm)&&r.area_sqm>0.5?r.area_sqm:r.width*r.depth;
+   r.depth=Math.max(0.8,target/c.width);
+   used+=r.depth;
+  }
+  c.used=used;
+ }
+ // 面積優先：不把房間放大去填滿整屋（標註面積總和通常小於整屋外框，差額是牆體與未標註空間），
+ // 只在總寬超出時才縮；不足時整體居中、兩側留白。
+ const sx=totalW>0?Math.min(1,W/totalW):1;
+ let x=-totalW*sx/2;
+ for(const c of cols){
+  c.width=roundHome(c.width*sx);
+  const k=c.used>0?H/c.used:1;
+  let z=-H/2;
+  for(const r of c.rooms){
+   r.width=c.width;
+   r.depth=roundHome(Math.max(0.5,r.depth*k));
+   r.x=roundHome(x+c.width/2);
+   r.z=roundHome(z+r.depth/2);
+   z+=r.depth;
+  }
+  x+=c.width;
+ }
+ return {cols:cols.length};
 }
