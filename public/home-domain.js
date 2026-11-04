@@ -121,7 +121,7 @@ function mergeSameNameRooms(rooms){
    const clash=rooms.filter(r=>!c.includes(r)).some(r=>overlap(box,r.rect)>box.w*box.h*.05);
    if(clash){out.push(...c);continue;}
    const area=c.reduce((s,r)=>s+(Number.isFinite(r.area_sqm)?r.area_sqm:0),0);
-   out.push({...c[0],rect:box,area_sqm:area>0?Math.round(area*100)/100:null,confidence:c.some(r=>r.confidence!=='high')?'medium':c[0].confidence,openings:[],notes:`圖上「${name}」被切成 ${c.length} 塊，已用外框合併；合併後門窗位置失效，請重新核對。`});
+   out.push({...c[0],rect:box,area_sqm:area>0?Math.round(area*100)/100:null,confidence:c.some(r=>r.confidence!=='high')?'medium':c[0].confidence,openings:keepOuterOpenings(c,box),notes:`圖上「${name}」被切成 ${c.length} 塊，已用外框合併；合併後門窗位置失效，請重新核對。`});
    warnings.push(`「${name}」在圖上被切成 ${c.length} 塊，已用外框合併成一間，門窗需重新核對。`);
   }
  }
@@ -221,7 +221,7 @@ function mergeOpenPlanRooms(rooms){
   const clash=rooms.filter(r=>!c.includes(r)).some(r=>overlapRect(box,r.rect)>box.w*box.h*.05);
   if(clash){out.push(...c);continue;}
   const area=c.reduce((n,r)=>n+(Number.isFinite(r.area_sqm)?r.area_sqm:0),0);
-  out.push({...c[0],name:'客廳/起居室',rect:box,area_sqm:area>0?Math.round(area*100)/100:null,confidence:'medium',openings:[],notes:`圖上 ${c.map(r=>r.name).join('、')} 之間沒有隔牆，已合併為同一開放空間；合併後門窗位置失效，請重新核對。`});
+  out.push({...c[0],name:'客廳/起居室',rect:box,area_sqm:area>0?Math.round(area*100)/100:null,confidence:'medium',openings:keepOuterOpenings(c,box),notes:`圖上 ${c.map(r=>r.name).join('、')} 之間沒有隔牆，已合併為同一開放空間；合併後門窗位置失效，請重新核對。`});
   warnings.push(`「${c.map(r=>r.name).join('、')}」之間沒有隔牆，已合併為同一開放空間（面積相加）。`);
  }
  if(out.length!==rooms.length){rooms.length=0;rooms.push(...out);}
@@ -291,4 +291,25 @@ function forceSeparate(home){
   if(clean)break;
  }
  return [...shrunk];
+}
+
+
+// 合併房間時，把各塊的門窗映射到新矩形，但只保留落在外邊界上的：
+// 內部邊界（原本兩塊之間的牆）上的門要丟掉，那道牆已經不存在了。
+function keepOuterOpenings(pieces,box){
+ const out=[];
+ for(const piece of pieces){
+  const r=piece.rect;
+  const outer={top:Math.abs(r.y-box.y)<1,bottom:Math.abs(r.y+r.h-(box.y+box.h))<1,left:Math.abs(r.x-box.x)<1,right:Math.abs(r.x+r.w-(box.x+box.w))<1};
+  for(const o of piece.openings||[]){
+   if(!outer[o.edge])continue;
+   const horizontal=['top','bottom'].includes(o.edge),len=horizontal?r.w:r.h,start=horizontal?r.x:r.y;
+   const abs0=start+o.offset*len,abs1=abs0+o.width*len;
+   const newLen=horizontal?box.w:box.h,newStart=horizontal?box.x:box.y;
+   const offset=(abs0-newStart)/newLen,width=(abs1-abs0)/newLen;
+   if(offset<-.001||offset+width>1.001)continue;
+   out.push({kind:o.kind,edge:o.edge,offset:roundHome(Math.max(0,offset)),width:roundHome(Math.min(width,1-Math.max(0,offset)))});
+  }
+ }
+ return out;
 }
