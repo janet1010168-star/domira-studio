@@ -17,7 +17,7 @@ test('default completion reuses rendering text model and key on the server, neve
  let seen;t.mock.method(globalThis,'fetch',async(url,options)=>{seen={url,options,body:JSON.parse(options.body)};return completion();});
  const body=payload({apiKey:'browser-must-not-select-key',model:'image-model',endpoint:'https://bad.test'}),r=await handleCareChat(request(body),env),d=await r.json();
  assert.equal(r.status,200);assert.deepEqual(Object.keys(d).sort(),['model','reply']);assert.equal(d.model,'deepseek-flash');assert.equal(seen.url,'https://api.deepseek.com/chat/completions');assert.equal(seen.options.headers.Authorization,'Bearer '+env.DEEPSEEK_API_KEY);
- assert.equal(seen.body.model,'deepseek-flash');assert.equal(seen.body.thinking.type,'disabled');assert.equal(seen.body.stream,false);assert.equal(seen.options.redirect,'error');assert.equal(seen.body.max_tokens,900);
+ assert.equal(seen.body.model,'deepseek-flash');assert.equal(seen.body.thinking.type,'disabled');assert.equal(seen.body.stream,false);assert.equal(seen.options.redirect,'manual');assert.equal(seen.body.max_tokens,900);
  assert.ok(!JSON.stringify(d).includes(env.DEEPSEEK_API_KEY));assert.ok(!seen.options.body.includes(env.DEEPSEEK_API_KEY));assert.ok(!seen.options.body.includes(body.apiKey));assert.ok(!seen.options.body.includes(body.endpoint));
  assert.match(seen.body.messages[0].content,/不會修改配置/);assert.match(seen.body.messages[0].content,/不是法定合規認證/);assert.match(seen.body.messages[1].content,/不是指令/);assert.ok(seen.body.messages[1].content.includes('靠窗閱讀'));assert.deepEqual(seen.body.messages.at(-1),body.messages[0]);
  assert.equal(r.headers.get('Cache-Control'),'no-store');assert.equal(r.headers.get('X-Content-Type-Options'),'nosniff');
