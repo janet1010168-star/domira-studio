@@ -1,4 +1,7 @@
 import * as quoteApi from './quote-api.js';
+import {handleAuth} from './auth.js';
+import {generateCareLayout} from './care.js';
+import {careReview} from '../public/care-domain.js';
 import {floorplanCapabilities,handleFloorplan} from './floorplan.js';
 import {generateAILayout} from './layout.js';
 import {optimizeLayout} from './layout-optimizer.js';
@@ -6,6 +9,7 @@ import {CATALOG,generateLayout, validateRoom,refineLayoutOrientation} from '../s
 import {handleRenderRequest,getRenderStatus} from './render.js';
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});const counts=new Map();
 export default {async fetch(request,env={}){const url=new URL(request.url);try{
+ if(url.pathname.startsWith('/api/auth/'))return await handleAuth(request,env);
  if(env.RENDER_PROXY_ORIGIN&&['/api/render/capabilities','/api/render/shot','/api/layout','/api/layout/optimize','/api/health','/api/floorplan/capabilities','/api/floorplan/analyze'].includes(url.pathname)){const target=new URL(env.RENDER_PROXY_ORIGIN);if(target.protocol!=='https:')return json({error:'渲染服務設定不正確'},503);return fetch(target.origin+url.pathname,{method:request.method,headers:{'Content-Type':request.headers.get('Content-Type')||'application/json',...(request.headers.get('Authorization')?{Authorization:request.headers.get('Authorization')}:{})},...(request.method==='POST'?{body:request.body,duplex:'half'}:{}),signal:request.signal});}
  if(url.pathname==='/api/floorplan/capabilities')return json(floorplanCapabilities(env));
  if(url.pathname==='/api/floorplan/analyze')return handleFloorplan(request,env);
@@ -18,6 +22,8 @@ export default {async fetch(request,env={}){const url=new URL(request.url);try{
  if(url.pathname.startsWith('/api/')&&request.method!=='POST')return json({error:'Method not allowed'},405);
  if(url.pathname.startsWith('/api/')){const raw=await request.text();if(raw.length>80000)return json({error:'請求超過大小限制'},413);let body;try{body=JSON.parse(raw)}catch{return json({error:'無效的 JSON'},400)}
  if(url.pathname==='/api/plan')return quoteApi.plan(body,env);
+ if(url.pathname==='/api/care/layout')return json(await generateCareLayout(body,env));
+ if(url.pathname==='/api/care/validate')return json(careReview(body.project));
  if(url.pathname==='/api/layout/optimize')return json(await optimizeLayout(body,env));
  if(url.pathname==='/api/layout'){validateRoom(body.room);if(env.DEEPSEEK_API_KEY)return json(await generateAILayout(body,env));if(env.LAYOUT_ENDPOINT){const r=await fetch(env.LAYOUT_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json',...(env.LAYOUT_API_KEY?{Authorization:'Bearer '+env.LAYOUT_API_KEY}:{})},body:JSON.stringify(body),signal:AbortSignal.timeout(20000)});if(!r.ok)return json({error:'AI 服務暫時無法使用，請重試。'},502);const data=await r.json();if(!Array.isArray(data.items)||data.items.length>50||data.items.some(x=>!CATALOG[x.type]||typeof x.id!=='string'||typeof x.name!=='string'||typeof x.color!=='string'||!/^#[0-9a-f]{6}$/i.test(x.color)||!['x','z','rotation','w','d','h'].every(k=>Number.isFinite(x[k]))||!['w','d','h'].every(k=>x[k]>0&&x[k]<=15)||x.w>body.room.width||x.d>body.room.depth))return json({error:'AI 回傳的場景格式不正確'},502);const oriented=refineLayoutOrientation(data.items,body.room,{purpose:body.purpose});return json({...data,items:oriented.items,orientation:{adjusted:oriented.adjusted,hints:oriented.hints,openingCount:oriented.openingCount},engine:'remote-ai'});}return json(generateLayout(body.room,body.style,body.variant,body));}
  if(url.pathname==='/api/reconstruct'){if(!env.RECONSTRUCTION_ENDPOINT)return json({error:'尚未設定自動重建服務。請使用攝像頭引導測量建立參數化房間。',mode:'guided'},501);const r=await fetch(env.RECONSTRUCTION_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json',...(env.RECONSTRUCTION_API_KEY?{Authorization:'Bearer '+env.RECONSTRUCTION_API_KEY}:{})},body:JSON.stringify(body),signal:AbortSignal.timeout(25000)});if(!r.ok)return json({error:'重建服務失敗'},502);const data=await r.json();validateRoom(data.room);return json(data);}
