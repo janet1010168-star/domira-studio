@@ -44,3 +44,15 @@ test('room edges snap to accumulated dimension lines',()=>{const home={width:10,
 test('parallel walls split by a gap merge into one',()=>{const room=(id,name,kind,x)=>({id,name,kind,purpose:kind,x,z:0,width:4.6,depth:4,height:2.7,confidence:'high',notes:'',openings:[],items:[]});const home={format:'domira.home.v1',width:10,depth:8,height:2.7,source:'ai-floorplan',scaleConfirmed:true,summary:'',warnings:[],rooms:[room('a','客廳','living',-2.6),room('b','睡房','bedroom',2.6)]};const walls=planWalls(home).filter(s=>s.kind==='wall'&&s.axis==='z');const middle=walls.filter(s=>Math.abs(s.x)<.4&&s.length>=3.5);assert.equal(middle.length,1,`縫兩側的同軸牆應併成一道，實際 ${middle.length} 道：${middle.map(s=>s.x).join(',')}`);});
 // 兜底：AI 給的 rect 重疊到推不開時，要自動縮小（而不是讓使用者在 review 畫面手動改）才能生成。
 test('overlapping rooms are forced apart so the home can always be built',()=>{const raw={summary:'',warnings:[],scale:{width:10,depth:8,basis:'dimensioned'},rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:600,h:600},confidence:'high',openings:[]},{name:'睡房',kind:'bedroom',rect:{x:400,y:400,w:600,h:600},confidence:'high',openings:[]}]};const home=homeFromAnalysis(raw,10,8,2.7,true);assert.ok(home.warnings.some(w=>/重疊/.test(w)),'縮過房間要留 warning');const a=home.rooms[0],b=home.rooms[1];const ox=(a.width+b.width)/2-Math.abs(a.x-b.x),oz=(a.depth+b.depth)/2-Math.abs(a.z-b.z);assert.ok(ox<=.02||oz<=.02,`strict 生成成功就代表不再重疊（ox=${ox.toFixed(2)}, oz=${oz.toFixed(2)}）`);});
+
+// 相鄰關係：AI 要回「誰跟誰共牆」，並用矩形交叉驗證——不一致的地方就是拓撲求解要修的信號。
+test('adjacency from the AI is parsed and cross-checked against rects',()=>{
+ const near={summary:'',warnings:[],rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:500,h:500},confidence:'high',openings:[],adjacent:[{to:'睡房',edge:'right'}]},{name:'睡房',kind:'bedroom',rect:{x:500,y:0,w:500,h:500},confidence:'high',openings:[],adjacent:[{to:'客廳',edge:'left'}]}]};
+ const a=validatePlanAnalysis(near);
+ assert.equal(a.rooms[0].adjacent.length,1,'adjacent 要保留');
+ assert.equal(a.rooms[0].adjacent[0].to,'睡房');
+ assert.ok(!a.warnings.some(w=>/沒有相接/.test(w)),'真的相鄰不該報 warning');
+ const far={summary:'',warnings:[],rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:300,h:300},confidence:'high',openings:[],adjacent:[{to:'睡房',edge:'right'}]},{name:'睡房',kind:'bedroom',rect:{x:700,y:0,w:300,h:300},confidence:'high',openings:[],adjacent:[]}]};
+ const b=validatePlanAnalysis(far);
+ assert.ok(b.warnings.some(w=>/沒有相接/.test(w)),'說相鄰但矩形分開要留 warning');
+});
