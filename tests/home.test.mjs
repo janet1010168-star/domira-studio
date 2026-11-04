@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {validatePlanAnalysis,homeFromAnalysis,validateHome,homeRoomData,homeItems,syncHomeProject,planWalls,homePlanSVG,buildRoomGraph,nightRoute,snapToDimensionLines,solveGrid,solveSlices} from '../public/home-domain.js';import {buildHomeGeometry} from '../public/home-scene.js';import {analyzeFloorplan,visionConfig} from '../worker/floorplan.js';import worker from '../worker/index.js';import {validateRoom} from '../src/domain.js';import {buildProjectQuote} from '../public/budget-domain.js';import {PRODUCTS,toSceneItem} from '../public/products.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {validatePlanAnalysis,homeFromAnalysis,validateHome,homeRoomData,homeItems,syncHomeProject,planWalls,homePlanSVG,buildRoomGraph,nightRoute,snapToDimensionLines,solveGrid,solveSlices,polygonArea} from '../public/home-domain.js';import {buildHomeGeometry} from '../public/home-scene.js';import {analyzeFloorplan,visionConfig} from '../worker/floorplan.js';import worker from '../worker/index.js';import {validateRoom} from '../src/domain.js';import {buildProjectQuote} from '../public/budget-domain.js';import {PRODUCTS,toSceneItem} from '../public/products.js';
 const analysis=()=>({rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:500,h:1000},confidence:'high',openings:[{kind:'door',edge:'right',offset:.3,width:.2},{kind:'window',edge:'left',offset:.2,width:.3}]},{name:'睡房',kind:'bedroom',rect:{x:500,y:0,w:500,h:1000},confidence:'medium',openings:[]}],scale:{width:8,depth:4,basis:'dimensioned'},summary:'兩個房間',warnings:[]});
 // 圖上標註的面積優先於 rect 比例：九空間圖實測誤差曾達 103%（客廳標 8.6 算成 4.62）。
 test('labelled areas correct plausible gaps while implausible ones keep the rect',()=>{const raw={rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:500,h:336},area_sqm:10.5,confidence:'high'},{name:'睡房',kind:'bedroom',rect:{x:500,y:0,w:500,h:336},area_sqm:7.44,confidence:'medium'},{name:'走廊',kind:'hall',rect:{x:0,y:336,w:1000,h:336},confidence:'low'}],scale:{width:null,depth:null,basis:'unknown'},summary:'三房',warnings:[]};const home=homeFromAnalysis(raw,4.47,11.45,2.7,false,{stages:['overlap','area','separate']});const living=home.rooms.find(r=>r.name==='客廳'),bed=home.rooms.find(r=>r.name==='睡房');assert.ok(Math.abs(living.width*living.depth-10.5)<.1,`小誤差應校正到標註值，實際 ${(living.width*living.depth).toFixed(2)}`);assert.ok(Math.abs(bed.width*bed.depth-12.8)<.1,`誤差 72% 應保留矩形，實際 ${(bed.width*bed.depth).toFixed(2)}`);assert.ok(home.warnings.some(w=>/差超過 25%/.test(w)),'要說明為什麼沒校正');});
@@ -111,4 +111,14 @@ test('slicing tree matches labelled areas without overlap',()=>{
  const hall=rooms[0],kit=rooms[1],bed=rooms[2];
  assert.ok(hall.x<kit.x&&hall.x<bed.x,'客廳應在左側');
  assert.ok(kit.z<bed.z,'廚房應在睡房上方');
+});
+
+// 多邊形面積（鞋帶公式）：梯形陽台這種非矩形房間要靠它算面積。
+test('polygon area uses the shoelace formula',()=>{
+ // 梯形：下底 4、上底 2、高 2 → (4+2)/2*2 = 6
+ assert.ok(Math.abs(polygonArea([[0,0],[4,0],[3,2],[1,2]])-6)<.01,'梯形面積應為 6');
+ // 矩形 3x2 = 6（頂點順序反過來也要一樣）
+ assert.ok(Math.abs(polygonArea([[0,0],[3,0],[3,2],[0,2]])-6)<.01);
+ assert.ok(Math.abs(polygonArea([[0,2],[3,2],[3,0],[0,0]])-6)<.01,'反序也要一樣');
+ assert.equal(polygonArea([[0,0],[1,1]]),0,'少於三點回 0');
 });
