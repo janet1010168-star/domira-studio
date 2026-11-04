@@ -1,3 +1,4 @@
+import {handleCareChat} from './care-chat.js';
 import * as quoteApi from './quote-api.js';
 import {handleAuth} from './auth.js';
 import {generateCareLayout} from './care.js';
@@ -9,6 +10,7 @@ import {CATALOG,generateLayout, validateRoom,refineLayoutOrientation} from '../s
 import {handleRenderRequest,getRenderStatus} from './render.js';
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});const counts=new Map();
 export default {async fetch(request,env={}){const url=new URL(request.url);try{
+ if(url.pathname==='/api/care/chat')return await handleCareChat(request,env);
  if(url.pathname.startsWith('/api/auth/'))return await handleAuth(request,env);
  if(env.RENDER_PROXY_ORIGIN&&['/api/render/capabilities','/api/render/shot','/api/layout','/api/layout/optimize','/api/health','/api/floorplan/capabilities','/api/floorplan/analyze'].includes(url.pathname)){const target=new URL(env.RENDER_PROXY_ORIGIN);if(target.protocol!=='https:')return json({error:'渲染服務設定不正確'},503);return fetch(target.origin+url.pathname,{method:request.method,headers:{'Content-Type':request.headers.get('Content-Type')||'application/json',...(request.headers.get('Authorization')?{Authorization:request.headers.get('Authorization')}:{})},...(request.method==='POST'?{body:request.body,duplex:'half'}:{}),signal:request.signal});}
  if(url.pathname==='/api/floorplan/capabilities')return json(floorplanCapabilities(env));
