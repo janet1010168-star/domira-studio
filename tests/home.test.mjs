@@ -1,7 +1,7 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {validatePlanAnalysis,homeFromAnalysis,validateHome,homeRoomData,homeItems,syncHomeProject,planWalls,homePlanSVG,buildRoomGraph,nightRoute,snapToDimensionLines} from '../public/home-domain.js';import {buildHomeGeometry} from '../public/home-scene.js';import {analyzeFloorplan,visionConfig} from '../worker/floorplan.js';import worker from '../worker/index.js';import {validateRoom} from '../src/domain.js';import {buildProjectQuote} from '../public/budget-domain.js';import {PRODUCTS,toSceneItem} from '../public/products.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {validatePlanAnalysis,homeFromAnalysis,validateHome,homeRoomData,homeItems,syncHomeProject,planWalls,homePlanSVG,buildRoomGraph,nightRoute,snapToDimensionLines,solveGrid} from '../public/home-domain.js';import {buildHomeGeometry} from '../public/home-scene.js';import {analyzeFloorplan,visionConfig} from '../worker/floorplan.js';import worker from '../worker/index.js';import {validateRoom} from '../src/domain.js';import {buildProjectQuote} from '../public/budget-domain.js';import {PRODUCTS,toSceneItem} from '../public/products.js';
 const analysis=()=>({rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:500,h:1000},confidence:'high',openings:[{kind:'door',edge:'right',offset:.3,width:.2},{kind:'window',edge:'left',offset:.2,width:.3}]},{name:'睡房',kind:'bedroom',rect:{x:500,y:0,w:500,h:1000},confidence:'medium',openings:[]}],scale:{width:8,depth:4,basis:'dimensioned'},summary:'兩個房間',warnings:[]});
 // 圖上標註的面積優先於 rect 比例：九空間圖實測誤差曾達 103%（客廳標 8.6 算成 4.62）。
-test('labelled areas correct plausible gaps while implausible ones keep the rect',()=>{const raw={rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:500,h:336},area_sqm:10.5,confidence:'high'},{name:'睡房',kind:'bedroom',rect:{x:500,y:0,w:500,h:336},area_sqm:7.44,confidence:'medium'},{name:'走廊',kind:'hall',rect:{x:0,y:336,w:1000,h:336},confidence:'low'}],scale:{width:null,depth:null,basis:'unknown'},summary:'三房',warnings:[]};const home=homeFromAnalysis(raw,4.47,11.45,2.7,false);const living=home.rooms.find(r=>r.name==='客廳'),bed=home.rooms.find(r=>r.name==='睡房');assert.ok(Math.abs(living.width*living.depth-10.5)<.1,`小誤差應校正到標註值，實際 ${(living.width*living.depth).toFixed(2)}`);assert.ok(Math.abs(bed.width*bed.depth-12.8)<.1,`誤差 72% 應保留矩形，實際 ${(bed.width*bed.depth).toFixed(2)}`);assert.ok(home.warnings.some(w=>/差超過 25%/.test(w)),'要說明為什麼沒校正');});
+test('labelled areas correct plausible gaps while implausible ones keep the rect',()=>{const raw={rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:500,h:336},area_sqm:10.5,confidence:'high'},{name:'睡房',kind:'bedroom',rect:{x:500,y:0,w:500,h:336},area_sqm:7.44,confidence:'medium'},{name:'走廊',kind:'hall',rect:{x:0,y:336,w:1000,h:336},confidence:'low'}],scale:{width:null,depth:null,basis:'unknown'},summary:'三房',warnings:[]};const home=homeFromAnalysis(raw,4.47,11.45,2.7,false,{stages:['overlap','area','separate']});const living=home.rooms.find(r=>r.name==='客廳'),bed=home.rooms.find(r=>r.name==='睡房');assert.ok(Math.abs(living.width*living.depth-10.5)<.1,`小誤差應校正到標註值，實際 ${(living.width*living.depth).toFixed(2)}`);assert.ok(Math.abs(bed.width*bed.depth-12.8)<.1,`誤差 72% 應保留矩形，實際 ${(bed.width*bed.depth).toFixed(2)}`);assert.ok(home.warnings.some(w=>/差超過 25%/.test(w)),'要說明為什麼沒校正');});
 test('rooms without area labels keep rect proportions untouched',()=>{const home=homeFromAnalysis(analysis(),8,4,2.7,false);const living=home.rooms.find(r=>r.name==='客廳');assert.ok(Math.abs(living.width-4)<.02&&Math.abs(living.depth-4)<.02);assert.ok(!home.warnings.some(w=>w.includes('校正')));});
 test('floorplan output validates real room extents, filters malformed openings and requires user-calibrated meter geometry',()=>{const a=validatePlanAnalysis(analysis()),home=homeFromAnalysis(a,8,4);assert.equal(home.rooms.length,2);assert.equal(home.rooms[0].x,-2);assert.equal(home.rooms[1].x,2);assert.equal(home.rooms[0].width,4);assert.equal(home.rooms[0].openings.length,2);assert.throws(()=>validatePlanAnalysis({...analysis(),rooms:[]}),/1–12/);const bad=analysis();bad.rooms[0].rect.w=1500;assert.throws(()=>validatePlanAnalysis(bad),/位置格式/);assert.throws(()=>homeFromAnalysis(analysis(),0,4),/全屋/);});
 test('whole home rejects overlapping, outside and duplicate rooms and room furniture, supports small service spaces without relaxing standalone scans',()=>{let home=homeFromAnalysis(analysis(),8,4);home.rooms[1].x=0;assert.throws(()=>validateHome(home),/重疊/);home=homeFromAnalysis(analysis(),8,4);home.rooms[0].x=-8;assert.throws(()=>validateHome(home),/超出/);assert.throws(()=>validateRoom({width:1.2,depth:2,height:2.7}));assert.doesNotThrow(()=>validateRoom({width:1.2,depth:2,height:2.7,source:'floorplan-room'}));});
@@ -43,7 +43,7 @@ test('room edges snap to accumulated dimension lines',()=>{const home={width:10,
 // 同軸、座標差 <0.6 m、區間重疊的牆線要併成一道（門窗不併，保留原位）。
 test('parallel walls split by a gap merge into one',()=>{const room=(id,name,kind,x)=>({id,name,kind,purpose:kind,x,z:0,width:4.6,depth:4,height:2.7,confidence:'high',notes:'',openings:[],items:[]});const home={format:'domira.home.v1',width:10,depth:8,height:2.7,source:'ai-floorplan',scaleConfirmed:true,summary:'',warnings:[],rooms:[room('a','客廳','living',-2.6),room('b','睡房','bedroom',2.6)]};const walls=planWalls(home).filter(s=>s.kind==='wall'&&s.axis==='z');const middle=walls.filter(s=>Math.abs(s.x)<.4&&s.length>=3.5);assert.equal(middle.length,1,`縫兩側的同軸牆應併成一道，實際 ${middle.length} 道：${middle.map(s=>s.x).join(',')}`);});
 // 兜底：AI 給的 rect 重疊到推不開時，要自動縮小（而不是讓使用者在 review 畫面手動改）才能生成。
-test('overlapping rooms are forced apart so the home can always be built',()=>{const raw={summary:'',warnings:[],scale:{width:10,depth:8,basis:'dimensioned'},rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:600,h:600},confidence:'high',openings:[]},{name:'睡房',kind:'bedroom',rect:{x:400,y:400,w:600,h:600},confidence:'high',openings:[]}]};const home=homeFromAnalysis(raw,10,8,2.7,true);assert.ok(home.warnings.some(w=>/重疊/.test(w)),'縮過房間要留 warning');const a=home.rooms[0],b=home.rooms[1];const ox=(a.width+b.width)/2-Math.abs(a.x-b.x),oz=(a.depth+b.depth)/2-Math.abs(a.z-b.z);assert.ok(ox<=.02||oz<=.02,`strict 生成成功就代表不再重疊（ox=${ox.toFixed(2)}, oz=${oz.toFixed(2)}）`);});
+test('overlapping rooms are forced apart so the home can always be built',()=>{const raw={summary:'',warnings:[],scale:{width:10,depth:8,basis:'dimensioned'},rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:600,h:600},confidence:'high',openings:[]},{name:'睡房',kind:'bedroom',rect:{x:400,y:400,w:600,h:600},confidence:'high',openings:[]}]};const home=homeFromAnalysis(raw,10,8,2.7,true,{stages:['overlap','area','separate']});assert.ok(home.warnings.some(w=>/重疊/.test(w)),'縮過房間要留 warning');const a=home.rooms[0],b=home.rooms[1];const ox=(a.width+b.width)/2-Math.abs(a.x-b.x),oz=(a.depth+b.depth)/2-Math.abs(a.z-b.z);assert.ok(ox<=.02||oz<=.02,`strict 生成成功就代表不再重疊（ox=${ox.toFixed(2)}, oz=${oz.toFixed(2)}）`);});
 
 // 相鄰關係：AI 要回「誰跟誰共牆」，並用矩形交叉驗證——不一致的地方就是拓撲求解要修的信號。
 test('adjacency from the AI is parsed and cross-checked against rects',()=>{
@@ -55,4 +55,25 @@ test('adjacency from the AI is parsed and cross-checked against rects',()=>{
  const far={summary:'',warnings:[],rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:300,h:300},confidence:'high',openings:[],adjacent:[{to:'睡房',edge:'right'}]},{name:'睡房',kind:'bedroom',rect:{x:700,y:0,w:300,h:300},confidence:'high',openings:[],adjacent:[]}]};
  const b=validatePlanAnalysis(far);
  assert.ok(b.warnings.some(w=>/沒有相接/.test(w)),'說相鄰但矩形分開要留 warning');
+});
+
+// 行列切分求解器：用「分欄 + 面積」重排，保證欄內貼合、欄間貼合、無重疊、不超出全屋。
+test('grid solver packs rooms into columns without overlap or overflow',()=>{
+ const home={width:10,depth:8};
+ const rooms=[
+  {name:'客廳',x:-3,z:0,width:4,depth:4,area_sqm:16},
+  {name:'睡房',x:2,z:-1.5,width:3,depth:3,area_sqm:9},
+  {name:'廚房',x:2,z:1.5,width:3,depth:3,area_sqm:9},
+ ];
+ const r=solveGrid(rooms,home);
+ assert.ok(r.cols>=2,`應該分成至少 2 欄，實際 ${r.cols}`);
+ for(const a of rooms)assert.ok(Math.abs(a.x)+a.width/2<=home.width/2+.02,`${a.name} 超出寬度`);
+ for(const a of rooms)assert.ok(Math.abs(a.z)+a.depth/2<=home.depth/2+.02,`${a.name} 超出深度`);
+ for(let i=0;i<rooms.length;i++)for(let k=i+1;k<rooms.length;k++){
+  const p=rooms[i],q2=rooms[k];
+  const ox=(p.width+q2.width)/2-Math.abs(p.x-q2.x),oz=(p.depth+q2.depth)/2-Math.abs(p.z-q2.z);
+  assert.ok(ox<=.02||oz<=.02,`${p.name} 與 ${q2.name} 重疊 ox=${ox.toFixed(2)} oz=${oz.toFixed(2)}`);
+ }
+ const bed=rooms.find(x=>x.name==='睡房'),kit=rooms.find(x=>x.name==='廚房');
+ assert.ok(Math.abs((bed.z+bed.depth/2)-(kit.z-kit.depth/2))<.05,'同欄房間要上下貼合');
 });
