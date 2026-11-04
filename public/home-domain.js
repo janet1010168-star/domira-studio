@@ -22,7 +22,9 @@ const mergeWarnings=[...mergeSameNameRooms(rooms),...mergeOpenPlanRooms(rooms)];
 function resolveOverlaps(home){const rooms=home.rooms,hw=home.width/2,hd=home.depth/2,start=new Map(rooms.map(r=>[r.id,{x:r.x,z:r.z}]));for(let iter=0;iter<200;iter++){let worst=0;for(let i=0;i<rooms.length;i++)for(let j=i+1;j<rooms.length;j++){const a=rooms[i],b=rooms[j],ox=(a.width+b.width)/2-Math.abs(a.x-b.x),oz=(a.depth+b.depth)/2-Math.abs(a.z-b.z);if(ox<=.001||oz<=.001)continue;const s0=start.get(a.id),s1=start.get(b.id);if(s0&&(Math.abs(a.x-s0.x)>1||Math.abs(a.z-s0.z)>1))continue;if(s1&&(Math.abs(b.x-s1.x)>1||Math.abs(b.z-s1.z)>1))continue;if(Math.min(ox,oz)>.5)continue;worst=Math.max(worst,Math.min(ox,oz));const push=.6;if(ox<=oz){const s=(ox/2+.005)*push*(a.x>=b.x?1:-1);a.x+=s;b.x-=s;}else{const s=(oz/2+.005)*push*(a.z>=b.z?1:-1);a.z+=s;b.z-=s;}}for(const r of rooms){r.x=Math.min(hw-r.width/2,Math.max(-hw+r.width/2,r.x));r.z=Math.min(hd-r.depth/2,Math.max(-hd+r.depth/2,r.z));}if(worst<.01)break;}for(const r of rooms){r.x=roundHome(r.x);r.z=roundHome(r.z);}return home;}
 export function homeFromAnalysis(analysis,width,depth,height=2.7,strict=true,options={}){const a=validatePlanAnalysis(analysis);const fu=1000/Math.max(a.frame?.w||1000,a.frame?.h||1000),FW=(a.frame?.w||1000)*fu,FH=(a.frame?.h||1000)*fu,OX=(1000-FW)/2,OY=(1000-FH)/2;const rooms=a.rooms.map(r=>({id:r.id,name:r.name,kind:r.kind,purpose:['bedroom','dining','work'].includes(r.kind)?r.kind:'living',x:roundHome(((r.rect.x+r.rect.w/2-OX)/FW-.5)*width),z:roundHome(((r.rect.y+r.rect.h/2-OY)/FH-.5)*depth),width:roundHome(r.rect.w/FW*width),depth:roundHome(r.rect.h/FH*depth),height:Number(height),confidence:r.confidence,notes:r.notes,openings:r.openings,adjacent:r.adjacent||[],area_sqm:r.area_sqm,polygon:(Array.isArray(r.polygon)&&r.polygon.length>=3?r.polygon.map(pt=>[roundHome((pt[0]-OX)/FW*width-((r.rect.x+r.rect.w/2-OX)/FW-.5)*width),roundHome((pt[1]-OY)/FH*depth-((r.rect.y+r.rect.h/2-OY)/FH-.5)*depth)]):[]),items:[]}));const home={format:'domira.home.v1',width:Number(width),depth:Number(depth),height:Number(height),source:'ai-floorplan',model:analysis.model||'deepseek-flash',scaleConfirmed:true,summary:a.summary,warnings:[...(a.warnings||[])],rooms};const stages=options.stages||['overlap','separate'];
  const onStage=st=>stages.includes(st);
- let corrected=0;if(options.correctArea!==false){if(onStage('overlap'))resolveOverlaps(home);if(onStage('dimsnap'))snapToDimensionLines(home,a.dimensions);if(onStage('sharedsnap'))snapSharedWalls(home);if(onStage('overlap'))resolveOverlaps(home);const byId=onStage('area')?new Map(a.rooms.map(r=>[r.id,r])):new Map(),areaSkipped=[];for(const room of rooms){const target=byId.get(room.id)?.area_sqm;if(!target||target<=0)continue;const rectArea=room.width*room.depth,err=Math.abs(rectArea-target)/target;if(err<=.08)continue;if(err>.25){areaSkipped.push(room.name);continue;}const ratio=Math.min(1.35,Math.max(.55,Math.sqrt(target/rectArea)));room.width=roundHome(room.width*ratio);room.depth=roundHome(room.depth*ratio);corrected++;}if(areaSkipped.length)home.warnings.push('以下房間的矩形面積與圖上標註差超過 25%，已保留矩形尺寸（rect 可能含牆體或走道，硬縮會破壞相鄰關係），請人工核對：'+areaSkipped.join('、')+'。');
+ const autofilled=autofillDoors(rooms);
+ let corrected=0;if(options.correctArea!==false){if(onStage('overlap'))resolveOverlaps(home);if(onStage('dimsnap'))snapToDimensionLines(home,a.dimensions);if(onStage('sharedsnap'))snapSharedWalls(home);if(onStage('overlap'))resolveOverlaps(home);const byId=onStage('area')?new Map(a.rooms.map(r=>[r.id,r])):new Map(),areaSkipped=[];for(const room of rooms){const target=byId.get(room.id)?.area_sqm;if(!target||target<=0)continue;const rectArea=room.width*room.depth,err=Math.abs(rectArea-target)/target;if(err<=.08)continue;if(err>.25){areaSkipped.push(room.name);continue;}const ratio=Math.min(1.35,Math.max(.55,Math.sqrt(target/rectArea)));room.width=roundHome(room.width*ratio);room.depth=roundHome(room.depth*ratio);corrected++;}if(autofilled.length)home.warnings.push('以下房間原本沒有門，已依相鄰關係自動補上一道（位置在該牆 40% 處，可用門編輯器調整）：'+autofilled.join('、')+'。');
+  if(areaSkipped.length)home.warnings.push('以下房間的矩形面積與圖上標註差超過 25%，已保留矩形尺寸（rect 可能含牆體或走道，硬縮會破壞相鄰關係），請人工核對：'+areaSkipped.join('、')+'。');
   if(corrected){if(onStage('overlap'))resolveOverlaps(home);if(onStage('sharedsnap'))snapSharedWalls(home);if(onStage('overlap'))resolveOverlaps(home);home.warnings.push('已用圖上標註面積校正 '+corrected+' 間房的尺寸（面積優先於 rect 比例，個別牆線可能偏移）；因標註面積是淨面積、牆體未計入，嚴格重疊檢查已跳過。');}}if(onStage('topology'))solveTopology(rooms,home);
  if(onStage('grid'))solveGrid(rooms,home);
  if(onStage('slices'))solveSlices(rooms,home);
@@ -501,4 +503,20 @@ export function polygonArea(points){
   sum+=a[0]*b[1]-b[0]*a[1];
  }
  return Math.abs(sum)/2;
+}
+
+
+// 自動補門：AI 常常漏掉門。對「一道門都沒有」的房間，挑一個 wall:true 的相鄰房間，
+// 在共享牆的 40% 位置補一道門。位置是猜的，但總比 3D 裡整間沒門好；使用者可用門編輯器改。
+function autofillDoors(rooms){
+ const filled=[];
+ for(const r of rooms){
+  if(!Array.isArray(r.openings))r.openings=[];
+  if(r.openings.some(o=>o.kind==='door'))continue;
+  const link=(r.adjacent||[]).find(a=>a.wall!==false&&['top','right','bottom','left'].includes(a.edge));
+  if(!link)continue;
+  r.openings.push({kind:'door',edge:link.edge,offset:.4,width:.2});
+  filled.push(r.name);
+ }
+ return filled;
 }
