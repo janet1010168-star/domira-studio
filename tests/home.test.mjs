@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {validatePlanAnalysis,homeFromAnalysis,validateHome,homeRoomData,homeItems,syncHomeProject,planWalls,homePlanSVG,buildRoomGraph,nightRoute,snapToDimensionLines,solveGrid} from '../public/home-domain.js';import {buildHomeGeometry} from '../public/home-scene.js';import {analyzeFloorplan,visionConfig} from '../worker/floorplan.js';import worker from '../worker/index.js';import {validateRoom} from '../src/domain.js';import {buildProjectQuote} from '../public/budget-domain.js';import {PRODUCTS,toSceneItem} from '../public/products.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {validatePlanAnalysis,homeFromAnalysis,validateHome,homeRoomData,homeItems,syncHomeProject,planWalls,homePlanSVG,buildRoomGraph,nightRoute,snapToDimensionLines,solveGrid,solveSlices} from '../public/home-domain.js';import {buildHomeGeometry} from '../public/home-scene.js';import {analyzeFloorplan,visionConfig} from '../worker/floorplan.js';import worker from '../worker/index.js';import {validateRoom} from '../src/domain.js';import {buildProjectQuote} from '../public/budget-domain.js';import {PRODUCTS,toSceneItem} from '../public/products.js';
 const analysis=()=>({rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:500,h:1000},confidence:'high',openings:[{kind:'door',edge:'right',offset:.3,width:.2},{kind:'window',edge:'left',offset:.2,width:.3}]},{name:'睡房',kind:'bedroom',rect:{x:500,y:0,w:500,h:1000},confidence:'medium',openings:[]}],scale:{width:8,depth:4,basis:'dimensioned'},summary:'兩個房間',warnings:[]});
 // 圖上標註的面積優先於 rect 比例：九空間圖實測誤差曾達 103%（客廳標 8.6 算成 4.62）。
 test('labelled areas correct plausible gaps while implausible ones keep the rect',()=>{const raw={rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:500,h:336},area_sqm:10.5,confidence:'high'},{name:'睡房',kind:'bedroom',rect:{x:500,y:0,w:500,h:336},area_sqm:7.44,confidence:'medium'},{name:'走廊',kind:'hall',rect:{x:0,y:336,w:1000,h:336},confidence:'low'}],scale:{width:null,depth:null,basis:'unknown'},summary:'三房',warnings:[]};const home=homeFromAnalysis(raw,4.47,11.45,2.7,false,{stages:['overlap','area','separate']});const living=home.rooms.find(r=>r.name==='客廳'),bed=home.rooms.find(r=>r.name==='睡房');assert.ok(Math.abs(living.width*living.depth-10.5)<.1,`小誤差應校正到標註值，實際 ${(living.width*living.depth).toFixed(2)}`);assert.ok(Math.abs(bed.width*bed.depth-12.8)<.1,`誤差 72% 應保留矩形，實際 ${(bed.width*bed.depth).toFixed(2)}`);assert.ok(home.warnings.some(w=>/差超過 25%/.test(w)),'要說明為什麼沒校正');});
@@ -90,4 +90,25 @@ test('open boundaries produce no wall segment',()=>{
  const closed={...home,rooms:[room('a','客廳','living',-2.5,0,5,4,[{to:'走廊',edge:'right',wall:true}]),room('b','走廊','hall',2.5,0,5,4,[{to:'客廳',edge:'left',wall:true}])]};
  const withWall=planWalls(closed).filter(s=>s.kind==='wall'&&s.axis==='z'&&Math.abs(s.x)<.15);
  assert.ok(withWall.length>=1,'有牆的邊界要生成牆');
+});
+
+// 切分樹：保住原圖的錯落結構（不是壓成直條），同時面積對得上標註值、無重疊。
+test('slicing tree matches labelled areas without overlap',()=>{
+ const rooms=[
+  {name:'客廳',x:-3,z:0,width:4,depth:6,area_sqm:24},
+  {name:'廚房',x:2,z:-2,width:3,depth:4,area_sqm:12},
+  {name:'睡房',x:2,z:2,width:3,depth:2,area_sqm:6},
+ ];
+ const home={width:10,depth:8};
+ solveSlices(rooms,home);
+ for(const r of rooms)assert.ok(Math.abs(r.width*r.depth-r.area_sqm)<r.area_sqm*.1,`${r.name} 面積應接近標註，實際 ${(r.width*r.depth).toFixed(1)} vs ${r.area_sqm}`);
+ for(let i=0;i<rooms.length;i++)for(let k=i+1;k<rooms.length;k++){
+  const p=rooms[i],q2=rooms[k];
+  const ox=(p.width+q2.width)/2-Math.abs(p.x-q2.x),oz=(p.depth+q2.depth)/2-Math.abs(p.z-q2.z);
+  assert.ok(ox<=.02||oz<=.02,`${p.name} 與 ${q2.name} 重疊`);
+ }
+ // 結構：客廳在左、廚房在右上、睡房在右下
+ const hall=rooms[0],kit=rooms[1],bed=rooms[2];
+ assert.ok(hall.x<kit.x&&hall.x<bed.x,'客廳應在左側');
+ assert.ok(kit.z<bed.z,'廚房應在睡房上方');
 });
