@@ -1,7 +1,8 @@
 import {safeCareLayout,validateCareProject,careReview,SAMPLE_ITEMS} from '../public/care-domain.js';
+import {requestedCareLayout} from './care-requested.js';
 import {generateAILayout} from './layout.js';
 export async function generateCareLayout(body,env={}){
- const project=validateCareProject(body.project);if(!['living','bedroom','dining',undefined].includes(body.purpose))throw Error('不支援的房間用途。');let proposal=[],engine='local-care-rules',notice='本地適老規則規劃';
+ const project=validateCareProject(body.project);if(!['living','bedroom','dining',undefined].includes(body.purpose))throw Error('不支援的房間用途。');if(project.brief)return requestedCareLayout(project,body,env);let proposal=[],engine='local-care-rules',notice='本地適老規則規劃';
  if(env.DEEPSEEK_API_KEY||env.RENDER_PROXY_ORIGIN||env.LAYOUT_ENDPOINT){try{
   const input={room:project.room,style:['warm','minimal','modern'].includes(body.style)?body.style:'warm',purpose:body.purpose||'living',mobility:project.profile==='wheelchair'?'wheelchair':'senior',preferences:['flow'],variant:0};let result;
   if(env.DEEPSEEK_API_KEY)result=await generateAILayout(input,env);

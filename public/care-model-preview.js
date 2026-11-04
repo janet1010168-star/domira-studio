@@ -1,0 +1,16 @@
+import * as THREE from './vendor/three.module.js';
+import {furniture} from './furniture.js';
+const cache=new Map();let pending;
+const dispose=g=>g.traverse(o=>{o.geometry?.dispose();if(o.material&&!o.material.userData?.shared)o.material.dispose();});
+function setup(host){const renderer=new THREE.WebGLRenderer({alpha:true,antialias:true});renderer.setPixelRatio(1);renderer.setSize(320,220);renderer.toneMapping=THREE.ACESFilmicToneMapping;const scene=new THREE.Scene();scene.add(new THREE.HemisphereLight('#fff7e8','#788d7c',2.4));const light=new THREE.DirectionalLight('#fff5df',3.2);light.position.set(-2,4,5);scene.add(light);if(host)host.append(renderer.domElement);return {renderer,scene,camera:new THREE.PerspectiveCamera(35,320/220,.001,100)};}
+function compose(s,p){const g=furniture({...p,id:p.productId,x:0,z:0,rotation:0}),size=Math.max(p.w,p.d,p.h);s.scene.add(g);s.camera.position.set(size*1.45,size*1.1,size*1.8);s.camera.lookAt(0,p.h*.45,0);s.renderer.render(s.scene,s.camera);return g;}
+export async function fillProductPreviews(products,root=document){
+ if(!pending)pending=(async()=>{let s;try{s=setup();for(const p of products){if(cache.has(p.productId))continue;const g=compose(s,p);cache.set(p.productId,s.renderer.domElement.toDataURL('image/png'));s.scene.remove(g);dispose(g);await new Promise(r=>setTimeout(r,0));}}catch{}finally{s?.renderer.dispose();s?.renderer.forceContextLoss();}})().finally(()=>pending=null);
+ await pending;for(const p of products){const src=cache.get(p.productId);if(src)root.querySelectorAll(`[data-product-image="${p.productId}"]`).forEach(img=>{img.src=src;img.hidden=false;});}
+}
+export function openProductPreview(product){
+ const dialog=document.createElement('dialog');dialog.className='product-preview-dialog';dialog.innerHTML='<button class="preview-close" aria-label="關閉模型">×</button><small>3D PRODUCT STUDY</small><h2></h2><div class="product-preview-stage"></div><p class="preview-dimensions"></p><p class="note">拖動可旋轉模型 · 外觀與預設尺寸為類別概念示意，實物規格請另行核對。</p>';
+ dialog.querySelector('h2').textContent=product.name;dialog.querySelector('.preview-dimensions').textContent=`寬 ${product.w} × 深 ${product.d} × 高 ${product.h} m`;document.body.append(dialog);dialog.showModal();let s,g,timer,down;
+ try{s=setup(dialog.querySelector('.product-preview-stage'));s.renderer.setSize(520,360);s.camera.aspect=520/360;s.camera.updateProjectionMatrix();g=compose(s,product);const canvas=s.renderer.domElement;canvas.onpointerdown=e=>{down=e.clientX;canvas.setPointerCapture(e.pointerId);};canvas.onpointermove=e=>{if(down!==undefined){g.rotation.y+=(e.clientX-down)*.012;down=e.clientX;s.renderer.render(s.scene,s.camera);}};canvas.onpointerup=canvas.onpointercancel=()=>down=undefined;timer=setInterval(()=>{if(down===undefined&&!document.hidden&&!matchMedia('(prefers-reduced-motion: reduce)').matches){g.rotation.y+=.012;s.renderer.render(s.scene,s.camera);}},100);}catch{dialog.querySelector('.product-preview-stage').textContent='此裝置未能開啟3D，仍可按產品尺寸規劃。';}
+ dialog.querySelector('button').onclick=()=>dialog.close();dialog.addEventListener('close',()=>{clearInterval(timer);if(g)dispose(g);s?.renderer.dispose();s?.renderer.forceContextLoss();dialog.remove();},{once:true});
+}
