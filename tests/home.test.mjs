@@ -122,3 +122,5 @@ test('polygon area uses the shoelace formula',()=>{
  assert.ok(Math.abs(polygonArea([[0,2],[3,2],[3,0],[0,0]])-6)<.01,'反序也要一樣');
  assert.equal(polygonArea([[0,0],[1,1]]),0,'少於三點回 0');
 });
+
+test('Google array-shaped invalid-key errors are classified without echoing credentials',async t=>{t.mock.method(globalThis,'fetch',async()=>Response.json([{error:{code:400,message:'Please pass a valid API key',status:'INVALID_ARGUMENT'}}],{status:400}));await assert.rejects(()=>analyzeFloorplan({image:'data:image/jpeg;base64,'+Buffer.from([255,216,255,0]).toString('base64')},{VISION_BASE_URL:'https://generativelanguage.googleapis.com/v1beta/openai/',VISION_MODEL:'gemini-3.5-flash',VISION_API_KEY:'test-key'}),/Google 拒絕此 API 密鑰/);});
