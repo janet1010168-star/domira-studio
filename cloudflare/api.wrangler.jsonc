@@ -20,5 +20,10 @@
       "DEEPSEEK_API_KEY",
       "RENDER_ACCESS_TOKEN"
     ]
+  },
+  "vars": {
+    "VISION_PROVIDER": "gemini",
+    "VISION_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai/",
+    "VISION_MODEL": "gemini-2.5-flash"
   }
 }
