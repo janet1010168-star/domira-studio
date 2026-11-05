@@ -46,11 +46,12 @@ export function mergeAnalyses(areaSrc,posSrc,posLabel){
 
 // 對外入口：主來源拿面積、副來源（可選）拿位置；副來源失敗時保留主來源並明確提示。
 export async function analyzeFloorplan(body,env){
- const primary=await analyzeFloorplanCore(body,env);
+ const primaryPromise=analyzeFloorplanCore(body,env);
  const merge=mergeVisionConfig(env);
- if(!merge.key||!merge.base||!merge.model)return {...validatePlanAnalysis(primary.raw),model:primary.model,provider:primary.provider};
+ if(!merge.key||!merge.base||!merge.model){const primary=await primaryPromise;return {...validatePlanAnalysis(primary.raw),model:primary.model,provider:primary.provider};}
  try{
-  const secondary=await analyzeFloorplanCore(body,{...env,VISION_PROVIDER:merge.provider,VISION_BASE_URL:merge.base,VISION_MODEL:merge.model,VISION_API_KEY:merge.key});
+  const [primary,secondary]=await Promise.all([primaryPromise,analyzeFloorplanCore(body,{...env,VISION_PROVIDER:merge.provider,VISION_BASE_URL:merge.base,VISION_MODEL:merge.model,VISION_API_KEY:merge.key}).catch(error=>{console.error('[floorplan] secondary source failed:',String(error&&error.message||error).slice(0,200));return null})]);
+  if(!secondary||!secondary.raw)return {...validatePlanAnalysis({...primary.raw,warnings:[...(primary.raw.warnings||[]),'第二來源識別或合併未完成，已保留主來源結果；未自動重試。']}),model:primary.model,provider:primary.provider,merge:{status:'fallback',model:merge.model,provider:merge.provider}};
   const merged=mergeAnalyses({...primary.raw,model:primary.model},secondary.raw,secondary.model);
   return {...validatePlanAnalysis(merged),model:primary.model+'+'+secondary.model,provider:primary.provider+'+'+secondary.provider,merge:{status:'complete',model:secondary.model,provider:secondary.provider}};
  }catch(error){
