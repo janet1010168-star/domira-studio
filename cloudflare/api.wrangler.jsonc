@@ -24,6 +24,9 @@
   "vars": {
     "VISION_PROVIDER": "qwen",
     "VISION_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "VISION_MODEL": "qwen3-vl-plus"
+    "VISION_MODEL": "qwen3-vl-plus",
+    "VISION_MERGE_PROVIDER": "deepseek",
+    "VISION_MERGE_BASE_URL": "https://api.deepseek.com",
+    "VISION_MERGE_MODEL": "deepseek-flash"
   }
 }
