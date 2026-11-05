@@ -29,17 +29,20 @@ function matchRoom(areaRoom,posRooms,used){
 
 // 合併：面積與名稱用主來源（Qwen 讀印刷數字準），矩形位置、門窗、相鄰關係用位置來源（deepseek 的相對位置較對）。
 export function mergeAnalyses(areaSrc,posSrc,posLabel){
+ // 位置為主：房間列表、矩形、門窗、相鄰關係全部用 posSrc（deepseek 的牆線較貼近原圖）；
+ // 面積從 areaSrc 取（Qwen 讀圖上印刷數字準），再用它對矩形做「微調」（±25% 以內才動）。
  const used=new Set();
  let matched=0;
- const rooms=areaSrc.rooms.map(r=>{
-  const p=matchRoom(r,posSrc.rooms,used);
-  if(!p)return r;
-  used.add(p);
+ const rooms=posSrc.rooms.map(r=>{
+  const a=matchRoom(r,areaSrc.rooms,used);
+  if(!a)return r;
+  used.add(a);
   matched++;
-  return {...r,rect:p.rect,openings:Array.isArray(p.openings)&&p.openings.length?p.openings:r.openings,adjacent:Array.isArray(p.adjacent)&&p.adjacent.length?p.adjacent:r.adjacent,polygon:Array.isArray(p.polygon)&&p.polygon.length>4?p.polygon:r.polygon,notes:String((r.notes||'')+'（位置取自 '+posLabel+'）').slice(0,160)};
+  return {...r,area_sqm:Number.isFinite(a.area_sqm)&&a.area_sqm>0?a.area_sqm:r.area_sqm,notes:String((r.notes||'')+'（面積取自 '+areaSrc.model+'）').slice(0,160)};
  });
- return {...areaSrc,rooms,warnings:[...(areaSrc.warnings||[]),'已合併兩個模型：面積與名稱取自 '+areaSrc.model+'，矩形位置與門窗取自 '+posLabel+'（對上 '+matched+'/'+areaSrc.rooms.length+' 間）。']};
+ return {...posSrc,rooms,warnings:[...(posSrc.warnings||[]),'已合併兩個模型：矩形與門窗取自 '+posLabel+'（貼近原圖牆線），面積取自 '+areaSrc.model+'（對上 '+matched+'/'+posSrc.rooms.length+' 間）。']};
 }
+
 
 // 對外入口：主來源拿面積、副來源（可選）拿位置；副來源失敗時靜默退回主來源。
 export async function analyzeFloorplan(body,env){
