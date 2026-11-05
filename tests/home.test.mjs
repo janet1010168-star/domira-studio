@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {validatePlanAnalysis,homeFromAnalysis,validateHome,homeRoomData,homeItems,syncHomeProject,planWalls,homePlanSVG,buildRoomGraph,nightRoute,snapToDimensionLines,solveGrid,solveSlices,polygonArea} from '../public/home-domain.js';import {buildHomeGeometry} from '../public/home-scene.js';import {analyzeFloorplan,visionConfig} from '../worker/floorplan.js';import worker from '../worker/index.js';import {validateRoom} from '../src/domain.js';import {buildProjectQuote} from '../public/budget-domain.js';import {PRODUCTS,toSceneItem} from '../public/products.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {validatePlanAnalysis,homeFromAnalysis,validateHome,homeRoomData,homeItems,syncHomeProject,planWalls,homePlanSVG,buildRoomGraph,nightRoute,snapToDimensionLines,solveGrid,solveSlices,polygonArea} from '../public/home-domain.js';import {buildHomeGeometry} from '../public/home-scene.js';import {analyzeFloorplan,visionConfig,mergeAnalyses} from '../worker/floorplan.js';import worker from '../worker/index.js';import {validateRoom} from '../src/domain.js';import {buildProjectQuote} from '../public/budget-domain.js';import {PRODUCTS,toSceneItem} from '../public/products.js';
 const analysis=()=>({rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:500,h:1000},confidence:'high',openings:[{kind:'door',edge:'right',offset:.3,width:.2},{kind:'window',edge:'left',offset:.2,width:.3}]},{name:'睡房',kind:'bedroom',rect:{x:500,y:0,w:500,h:1000},confidence:'medium',openings:[]}],scale:{width:8,depth:4,basis:'dimensioned'},summary:'兩個房間',warnings:[]});
 // 圖上標註的面積優先於 rect 比例：九空間圖實測誤差曾達 103%（客廳標 8.6 算成 4.62）。
 test('labelled areas correct plausible gaps while implausible ones keep the rect',()=>{const raw={rooms:[{name:'客廳',kind:'living',rect:{x:0,y:0,w:500,h:336},area_sqm:10.5,confidence:'high'},{name:'睡房',kind:'bedroom',rect:{x:500,y:0,w:500,h:336},area_sqm:7.44,confidence:'medium'},{name:'走廊',kind:'hall',rect:{x:0,y:336,w:1000,h:336},confidence:'low'}],scale:{width:null,depth:null,basis:'unknown'},summary:'三房',warnings:[]};const home=homeFromAnalysis(raw,4.47,11.45,2.7,false,{stages:['overlap','area','separate']});const living=home.rooms.find(r=>r.name==='客廳'),bed=home.rooms.find(r=>r.name==='睡房');assert.ok(Math.abs(living.width*living.depth-10.5)<.1,`小誤差應校正到標註值，實際 ${(living.width*living.depth).toFixed(2)}`);assert.ok(Math.abs(bed.width*bed.depth-12.8)<.1,`誤差 72% 應保留矩形，實際 ${(bed.width*bed.depth).toFixed(2)}`);assert.ok(home.warnings.some(w=>/差超過 25%/.test(w)),'要說明為什麼沒校正');});
@@ -126,3 +126,21 @@ test('polygon area uses the shoelace formula',()=>{
 test('Google array-shaped invalid-key errors are classified without echoing credentials',async t=>{t.mock.method(globalThis,'fetch',async()=>Response.json([{error:{code:400,message:'Please pass a valid API key',status:'INVALID_ARGUMENT'}}],{status:400}));await assert.rejects(()=>analyzeFloorplan({image:'data:image/jpeg;base64,'+Buffer.from([255,216,255,0]).toString('base64')},{VISION_BASE_URL:'https://generativelanguage.googleapis.com/v1beta/openai/',VISION_MODEL:'gemini-3.5-flash',VISION_API_KEY:'test-key'}),/識圖服務拒絕此 API 密鑰/);});
 
 test('Qwen vision uses dedicated credentials and non-thinking multimodal JSON requests',async t=>{const cfg=visionConfig({VISION_BASE_URL:'https://dashscope.aliyuncs.com/compatible-mode/v1',VISION_MODEL:'qwen3-vl-plus',VISION_API_KEY:'qwen-test'});assert.equal(cfg.provider,'qwen');assert.equal(visionConfig({VISION_BASE_URL:cfg.base,DEEPSEEK_API_KEY:'old-key'}).key,'');let calls=0;t.mock.method(globalThis,'fetch',async(url,request)=>{calls++;assert.equal(url,cfg.base+'/chat/completions');assert.equal(request.headers.Authorization,'Bearer qwen-test');const body=JSON.parse(request.body);assert.equal(body.model,'qwen3-vl-plus');assert.equal(body.enable_thinking,false);assert.equal(body.thinking,undefined);assert.equal(body.reasoning_effort,undefined);assert.equal(body.response_format.type,'json_object');assert.equal(body.messages[1].content[1].image_url.detail,undefined);return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify(analysis())}}]});});const result=await analyzeFloorplan({image:'data:image/jpeg;base64,'+Buffer.from([255,216,255,0]).toString('base64')},{VISION_BASE_URL:cfg.base,VISION_MODEL:cfg.model,VISION_API_KEY:'qwen-test'});assert.equal(result.provider,'qwen');assert.equal(result.model,'qwen3-vl-plus');assert.equal(calls,1);});
+
+// 雙模型合併：面積與名稱用主來源（Qwen 讀印刷數字準），矩形位置與門窗用副來源（deepseek 的相對位置較對）。
+test('merging takes area from primary and rect from secondary',()=>{
+ const area={model:'qwen3-vl-plus',provider:'qwen',warnings:[],rooms:[
+  {name:'客廳',kind:'living',rect:{x:0,y:0,w:500,h:500},area_sqm:32.35,openings:[],adjacent:[]},
+  {name:'主臥',kind:'bedroom',rect:{x:500,y:0,w:500,h:500},area_sqm:12.4,openings:[],adjacent:[]},
+ ]};
+ const pos={model:'deepseek-flash',provider:'deepseek',warnings:[],rooms:[
+  {name:'客廳',kind:'living',rect:{x:10,y:20,w:400,h:300},openings:[{kind:'door',edge:'top',offset:.4,width:.2}],adjacent:[]},
+  {name:'主臥',kind:'bedroom',rect:{x:600,y:50,w:300,h:400},openings:[],adjacent:[]},
+ ]};
+ const m=mergeAnalyses(area,pos,'deepseek-flash');
+ assert.equal(m.rooms[0].area_sqm,32.35,'面積要保留主來源');
+ assert.deepEqual(m.rooms[0].rect,{x:10,y:20,w:400,h:300},'矩形要取自副來源');
+ assert.equal(m.rooms[0].openings.length,1,'門窗要取自副來源');
+ assert.equal(m.rooms[1].rect.x,600,'第二間也要合併到');
+ assert.ok(m.warnings.some(w=>/對上 2\/2/.test(w)),'要回報對上幾間');
+});
