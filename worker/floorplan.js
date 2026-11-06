@@ -55,7 +55,12 @@ export async function analyzeFloorplan(body,env){
   const merged=mergeAnalyses({...primary.raw,model:primary.model},secondary.raw,secondary.model);
   return {...validatePlanAnalysis(merged),model:primary.model+'+'+secondary.model,provider:primary.provider+'+'+secondary.provider,merge:{status:'complete',model:secondary.model,provider:secondary.provider}};
  }catch(error){
-  console.error('[floorplan] merge source failed, falling back to primary:',String(error&&error.message||error).slice(0,200));
-  return {...validatePlanAnalysis({...primary.raw,warnings:[...(primary.raw.warnings||[]),'第二來源識別或合併未完成，已保留主來源結果；未自動重試。']}),model:primary.model,provider:primary.provider,merge:{status:'fallback',model:merge.model,provider:merge.provider}};
+  // 走到這裡代表 Promise.all 整體 reject（主來源失敗）或合併本身出錯。
+  // 主來源若其實成功了（例如只是合併函式拋錯），仍可退回它；否則把原始錯誤往上拋。
+  console.error('[floorplan] primary or merge failed:',String(error&&error.message||error).slice(0,200));
+  let primary=null;
+  try{primary=await primaryPromise;}catch{}
+  if(primary&&primary.raw)return {...validatePlanAnalysis({...primary.raw,warnings:[...(primary.raw.warnings||[]),'第二來源識別或合併未完成，已保留主來源結果；未自動重試。']}),model:primary.model,provider:primary.provider,merge:{status:'fallback',model:merge.model,provider:merge.provider}};
+  throw error;
  }
 }
